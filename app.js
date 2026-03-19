@@ -1,6 +1,7 @@
 const STORAGE_KEYS = {
   leaderboard: 'ff-lite-leaderboard',
   playerName: 'ff-lite-player-name',
+  matchPrefix: 'ff-lite-match-',
 };
 
 const SPRITES = {
@@ -52,6 +53,8 @@ const state = {
   logs: [],
   leaderboard: loadLeaderboard(),
   previewAnimators: [],
+  pendingStartTimer: null,
+  activeMatchSubscription: null,
 };
 
 class BackgroundMusicManager {
@@ -334,13 +337,94 @@ class SpriteSheetAnimator {
 }
 
 
+function getMatchStorageKey(matchId) {
+  return `${STORAGE_KEYS.matchPrefix}${matchId}`;
+}
+function readStoredMatch(matchId) {
+  if (!matchId) return null;
+  try {
+    return JSON.parse(localStorage.getItem(getMatchStorageKey(matchId)) || 'null');
+  } catch {
+    return null;
+  }
+}
+function writeStoredMatch(match) {
+  if (!match?.id) return null;
+  localStorage.setItem(getMatchStorageKey(match.id), JSON.stringify(match));
+  return match;
+}
+function clearMatchWatcher() {
+  if (state.activeMatchSubscription) {
+    state.activeMatchSubscription.abort();
+    state.activeMatchSubscription = null;
+  }
+}
+function clearPendingStartTimer() {
+  if (state.pendingStartTimer) {
+    window.clearTimeout(state.pendingStartTimer);
+    state.pendingStartTimer = null;
+  }
+}
+function subscribeToPendingMatch(matchId, onChange) {
+  clearMatchWatcher();
+  if (!matchId) return;
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const sync = () => {
+    if (!signal.aborted) onChange(readStoredMatch(matchId));
+  };
+  window.addEventListener('storage', (event) => {
+    if (event.key === getMatchStorageKey(matchId)) sync();
+  }, { signal });
+  channel?.addEventListener('message', (event) => {
+    if (event.data?.type === 'match-update' && event.data.matchId === matchId) sync();
+  }, { signal });
+  const pollId = window.setInterval(sync, 1000);
+  signal.addEventListener('abort', () => window.clearInterval(pollId), { once: true });
+  state.activeMatchSubscription = controller;
+}
+function setPendingMatchState(nextPendingMatch) {
+  state.pendingMatch = nextPendingMatch;
+  const matchId = nextPendingMatch?.payload?.id;
+  if (!matchId) {
+    clearMatchWatcher();
+    return;
+  }
+  subscribeToPendingMatch(matchId, (storedMatch) => {
+    if (!storedMatch || state.screen !== 'create') return;
+    if (storedMatch.status === 'active' && storedMatch.playerB) {
+      const nextPayload = {
+        ...state.pendingMatch.payload,
+        playerB: storedMatch.playerB,
+      };
+      state.pendingMatch = {
+        ...state.pendingMatch,
+        payload: nextPayload,
+        opponentJoined: true,
+      };
+      queueMatchStart(nextPayload);
+      return;
+    }
+    if (storedMatch.playerB && !state.pendingMatch.opponentJoined) {
+      state.pendingMatch = {
+        ...state.pendingMatch,
+        payload: {
+          ...state.pendingMatch.payload,
+          playerB: storedMatch.playerB,
+        },
+        opponentJoined: true,
+      };
+      render();
+    }
+  });
+}
 function makeMatchPayload(playerA = state.me) {
   const matchId = `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-  const hostSeed = `${matchId}:A:${playerA.name}`;
   return {
     id: matchId,
     createdAt: Date.now(),
-    playerA: { id: playerA.id, name: playerA.name, seed: hostSeed },
+    status: 'waiting',
+    playerA: { id: playerA.id, name: playerA.name },
   };
 }
 function getJoinLink(payload) {
@@ -359,6 +443,8 @@ function parseJoinPayload() {
 }
 function resetToHome() {
   window.history.replaceState({}, '', window.location.pathname);
+  clearPendingStartTimer();
+  clearMatchWatcher();
   state.pendingMatch = null;
   state.match = null;
   state.logs = [];
@@ -368,31 +454,37 @@ function resetToHome() {
 }
 function startCreateFlow() {
   const payload = makeMatchPayload();
-  state.pendingMatch = { payload, link: getJoinLink(payload), opponentJoined: false };
+  writeStoredMatch(payload);
+  setPendingMatchState({ payload, link: getJoinLink(payload), opponentJoined: false });
   state.screen = 'create';
   bgmManager.sync();
   render();
 }
 function startJoinedFlow(payload) {
-  const playerBSeed = `${payload.id}:B:${state.me.name}`;
-  state.pendingMatch = {
-    payload: {
-      ...payload,
-      playerB: { id: state.me.id, name: state.me.name, seed: playerBSeed },
-    },
+  const nextPayload = {
+    ...payload,
+    status: 'active',
+    playerB: { id: state.me.id, name: state.me.name },
+  };
+  writeStoredMatch(nextPayload);
+  setPendingMatchState({
+    payload: nextPayload,
     link: getJoinLink(payload),
     opponentJoined: true,
-  };
+  });
   state.screen = 'join';
   bgmManager.sync();
   render();
-  channel?.postMessage({ type: 'joined', matchId: payload.id, playerB: state.pendingMatch.payload.playerB });
-  queueMatchStart(state.pendingMatch.payload);
+  channel?.postMessage({ type: 'joined', matchId: payload.id, playerB: nextPayload.playerB });
+  channel?.postMessage({ type: 'match-update', matchId: payload.id });
+  queueMatchStart(nextPayload);
 }
 function queueMatchStart(payload) {
-  if (state.match || state.screen === 'match' || state.screen === 'postmatch') return;
-  window.setTimeout(() => {
+  if (state.match || state.screen === 'match' || state.screen === 'postmatch' || state.pendingStartTimer) return;
+  state.pendingStartTimer = window.setTimeout(() => {
+    state.pendingStartTimer = null;
     if (state.match || state.screen === 'match' || state.screen === 'postmatch') return;
+    clearMatchWatcher();
     state.screen = 'match';
     state.match = createResolvedMatch(payload);
     state.logs = ['I goblini si annusano con sospetto...'];
@@ -403,7 +495,7 @@ function queueMatchStart(payload) {
 function createResolvedMatch(payload) {
   const playerA = payload.playerA;
   const playerB = payload.playerB || {
-    id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`), seed: `${payload.id}:fallback`,
+    id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`),
   };
   return {
     id: payload.id,
@@ -707,11 +799,18 @@ function render() {
 
 channel?.addEventListener('message', (event) => {
   if (event.data?.type === 'joined' && state.pendingMatch?.payload.id === event.data.matchId && state.screen === 'create') {
-    state.pendingMatch.opponentJoined = true;
-    queueMatchStart({
+    const nextPayload = {
       ...state.pendingMatch.payload,
-      playerB: event.data.playerB || { id: 'broadcast-b', name: generateFunnyName(`${event.data.matchId}:broadcast`), seed: `${event.data.matchId}:broadcast` },
-    });
+      status: 'active',
+      playerB: event.data.playerB || { id: 'broadcast-b', name: generateFunnyName(`${event.data.matchId}:broadcast`) },
+    };
+    writeStoredMatch(nextPayload);
+    state.pendingMatch = {
+      ...state.pendingMatch,
+      payload: nextPayload,
+      opponentJoined: true,
+    };
+    queueMatchStart(nextPayload);
   }
 });
 
