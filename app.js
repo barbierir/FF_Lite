@@ -6,7 +6,7 @@ const STORAGE_KEYS = {
 
 const SPRITES = {
   idle: 'assets/goblin/idle.png',
-  recharge: 'assets/goblin/recharge.png',
+  recharge: 'assets/goblin/charge.png',
   attack: 'assets/goblin/attack.png',
   backfire: 'assets/goblin/backfire.png',
   hit: 'assets/goblin/hit.png',
@@ -14,6 +14,23 @@ const SPRITES = {
   defeat: 'assets/goblin/defeat.png',
 };
 const HOME_IMAGE = 'assets/goblin/idle_choose.png';
+const ARENA_BACKGROUND = '/images/match_bg.png'; // Placeholder image path: replace/add the real arena background manually later.
+const AUDIO_CONFIG = {
+  bgm: {
+    src: '/audio/bgm.mp3', // Placeholder audio path: replace/add the real looping BGM manually later.
+    volume: 0.32,
+  },
+  sfx: {
+    attack: { src: '/audio/attack.mp3', volume: 0.8 }, // Placeholder audio path: replace/add the real SFX manually later.
+    recharge: { src: '/audio/recharge.mp3', volume: 0.7 },
+    backfire: { src: '/audio/backfire.mp3', volume: 0.78 },
+    hit: { src: '/audio/hit.mp3', volume: 0.72 },
+    victory: { src: '/audio/victory.mp3', volume: 0.82 },
+    defeat: { src: '/audio/defeat.mp3', volume: 0.72 },
+    matchStart: { src: '/audio/match_start.mp3', volume: 0.65 },
+    matchEnd: { src: '/audio/match_end.mp3', volume: 0.65 },
+  },
+};
 const ANIMATION_CONFIG = {
   idle: { loop: true, frameDuration: 180 },
   recharge: { loop: false, frameDuration: 90 },
@@ -36,6 +53,104 @@ const state = {
   logs: [],
   leaderboard: loadLeaderboard(),
 };
+
+class BackgroundMusicManager {
+  constructor(config) {
+    this.config = config;
+    this.audio = null;
+    this.started = false;
+    this.failed = false;
+    this.boundStart = this.start.bind(this);
+  }
+  ensureAudio() {
+    if (this.audio || this.failed) return this.audio;
+    try {
+      const audio = new Audio(this.config.src);
+      audio.loop = true;
+      audio.preload = 'none';
+      audio.volume = this.config.volume;
+      audio.addEventListener('error', () => {
+        this.failed = true;
+        this.audio = null;
+      });
+      this.audio = audio;
+    } catch {
+      this.failed = true;
+    }
+    return this.audio;
+  }
+  armAutoStart() {
+    const options = { once: true, passive: true };
+    document.addEventListener('pointerdown', this.boundStart, options);
+    document.addEventListener('keydown', this.boundStart, options);
+  }
+  async start() {
+    if (this.started || this.failed) return;
+    const audio = this.ensureAudio();
+    if (!audio) return;
+    try {
+      audio.volume = this.config.volume;
+      await audio.play();
+      this.started = true;
+    } catch {
+      // Browser autoplay or missing-file issue: keep the game running silently.
+    }
+  }
+  sync() {
+    if (this.failed) return;
+    const audio = this.ensureAudio();
+    if (!audio || !this.started) return;
+    if (audio.paused) {
+      audio.play().catch(() => {});
+    }
+  }
+}
+
+class SoundEffectsManager {
+  constructor(config) {
+    this.config = config;
+    this.cache = new Map();
+    this.cooldowns = new Map();
+    this.minInterval = 120;
+  }
+  getAudio(name) {
+    if (this.cache.has(name)) return this.cache.get(name);
+    const entry = this.config[name];
+    if (!entry) return null;
+    try {
+      const audio = new Audio(entry.src);
+      audio.preload = 'none';
+      audio.volume = entry.volume;
+      audio.addEventListener('error', () => {
+        this.cache.set(name, null);
+      }, { once: true });
+      this.cache.set(name, audio);
+      return audio;
+    } catch {
+      this.cache.set(name, null);
+      return null;
+    }
+  }
+  play(name) {
+    const audio = this.getAudio(name);
+    if (!audio) return;
+    const now = performance.now();
+    const last = this.cooldowns.get(name) || 0;
+    if (now - last < this.minInterval) return;
+    this.cooldowns.set(name, now);
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = this.config[name].volume;
+      audio.play().catch(() => {});
+    } catch {
+      // Missing file or browser restriction: fail silently.
+    }
+  }
+}
+
+const bgmManager = new BackgroundMusicManager(AUDIO_CONFIG.bgm);
+const sfxManager = new SoundEffectsManager(AUDIO_CONFIG.sfx);
 
 function hashString(input) {
   let hash = 2166136261;
@@ -183,12 +298,14 @@ function resetToHome() {
   state.match = null;
   state.logs = [];
   state.screen = 'home';
+  bgmManager.sync();
   render();
 }
 function startCreateFlow() {
   const payload = makeMatchPayload();
   state.pendingMatch = { payload, link: getJoinLink(payload), opponentJoined: false };
   state.screen = 'create';
+  bgmManager.sync();
   render();
 }
 function startJoinedFlow(payload) {
@@ -202,6 +319,7 @@ function startJoinedFlow(payload) {
     opponentJoined: true,
   };
   state.screen = 'join';
+  bgmManager.sync();
   render();
   channel?.postMessage({ type: 'joined', matchId: payload.id, playerB: state.pendingMatch.payload.playerB });
   queueMatchStart(state.pendingMatch.payload);
@@ -225,8 +343,8 @@ function createResolvedMatch(payload) {
   return {
     id: payload.id,
     fighters: [
-      { slot: 'A', ...playerA, hp: 100, state: 'idle' },
-      { slot: 'B', ...playerB, hp: 100, state: 'idle' },
+      { slot: 'A', side: 'left', ...playerA, hp: 100, state: 'idle' },
+      { slot: 'B', side: 'right', ...playerB, hp: 100, state: 'idle' },
     ],
     turn: 0,
     finished: false,
@@ -236,13 +354,13 @@ function createResolvedMatch(payload) {
 function updateMatchUI() {
   if (!(state.screen === 'match' || state.screen === 'postmatch') || !state.match) return;
   state.match.fighters.forEach((fighter, index) => {
-    const fill = document.querySelector(`[data-hp=\"${index}\"]`);
-    const label = document.querySelector(`[data-hp-label=\"${index}\"]`);
+    const fill = document.querySelector(`[data-hp="${index}"]`);
+    const label = document.querySelector(`[data-hp-label="${index}"]`);
     if (fill) fill.style.setProperty('--hp', `${fighter.hp}%`);
     if (label) label.textContent = `HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}`;
   });
   const logPanel = document.getElementById('log-lines');
-  if (logPanel) logPanel.innerHTML = state.logs.map((line) => `<p class=\"log-line\">${line}</p>`).join('');
+  if (logPanel) logPanel.innerHTML = state.logs.map((line) => `<p class="log-line">${line}</p>`).join('');
 }
 function logLine(text) {
   state.logs = [text, ...state.logs].slice(0, 5);
@@ -270,9 +388,10 @@ function updateLeaderboardForResult(winner, loser, draw = false) {
   sortLeaderboard();
   saveLeaderboard();
 }
-async function playState(index, stateName) {
+async function playState(index, stateName, soundName = stateName) {
   const animator = state.match.animators[index];
   return new Promise((resolve) => {
+    sfxManager.play(soundName);
     animator.play(stateName, resolve);
     if (ANIMATION_CONFIG[stateName].loop) {
       window.setTimeout(resolve, 600);
@@ -281,6 +400,8 @@ async function playState(index, stateName) {
 }
 async function runMatchSequence() {
   const [a, b] = state.match.fighters;
+  bgmManager.sync();
+  sfxManager.play('matchStart');
   for (const animator of state.match.animators) animator.play('idle');
   while (!state.match.finished) {
     state.match.turn += 1;
@@ -295,13 +416,13 @@ async function runMatchSequence() {
       attacker.hp = Math.max(0, attacker.hp - action.amount);
       updateMatchUI();
       logLine(action.text);
-      await playState(attackerIndex, attacker.hp <= 0 ? 'defeat' : 'hit');
+      await playState(attackerIndex, attacker.hp <= 0 ? 'defeat' : 'hit', attacker.hp <= 0 ? 'defeat' : 'hit');
     } else {
       await playState(attackerIndex, 'attack');
       defender.hp = Math.max(0, defender.hp - action.amount);
       updateMatchUI();
       logLine(action.text);
-      await playState(defenderIndex, defender.hp <= 0 ? 'defeat' : 'hit');
+      await playState(defenderIndex, defender.hp <= 0 ? 'defeat' : 'hit', defender.hp <= 0 ? 'defeat' : 'hit');
     }
     updateMatchUI();
     if (a.hp <= 0 || b.hp <= 0 || state.match.turn >= 12) {
@@ -316,6 +437,7 @@ async function runMatchSequence() {
 function finishMatch() {
   const [a, b] = state.match.fighters;
   state.match.finished = true;
+  sfxManager.play('matchEnd');
   if (a.hp === b.hp) {
     state.match.winner = null;
     updateLeaderboardForResult(null, null, true);
@@ -328,6 +450,8 @@ function finishMatch() {
     state.match.winner = winner;
     state.match.animators[winner === a ? 0 : 1].play('victory');
     state.match.animators[winner === a ? 1 : 0].play('defeat');
+    sfxManager.play('victory');
+    sfxManager.play('defeat');
     updateLeaderboardForResult(winner, loser, false);
     logLine(`${winner.name} trionfa nella nebbia verdognola.`);
   }
@@ -402,19 +526,21 @@ function renderMatchOrPost() {
         <p class="muted">Turno ${state.match.turn}. La potenza aumenta ogni round, quindi il caos non dura troppo.</p>
         ${isPost ? `<div class="result-banner"><strong>${result}</strong><br/>${state.match.winner ? 'Il perdente resta nella posa di sconfitta finale.' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
       </div>
-      <div class="arena">
-        ${state.match.fighters.map((fighter, index) => `
-          <article class="fighter-card">
-            <div class="fighter">
-              <div class="nameplate">${fighter.name}</div>
-              <div class="sprite-stage" data-animator="${index}" style="--tint:${fighter.tint};--flip:${index === 0 ? 1 : -1}">
+      <div class="arena-shell">
+        <section class="arena" style="--arena-image:url('${ARENA_BACKGROUND}')">
+          ${state.match.fighters.map((fighter, index) => `
+            <article class="fighter fighter-${fighter.side}">
+              <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}">
+                <div class="nameplate">${fighter.name}</div>
+                <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}</div>
+              </div>
+              <div class="sprite-stage" data-animator="${index}" style="--tint:${fighter.tint};--flip:${fighter.side === 'left' ? -1 : 1}">
                 <div class="sprite"></div>
                 <div class="sprite-fallback" hidden></div>
               </div>
               <div class="health-bar"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
-              <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}</div>
-            </div>
-          </article>`).join('')}
+            </article>`).join('')}
+        </section>
       </div>
       <div class="log-panel" id="log-lines">
         ${state.logs.map((line) => `<p class="log-line">${line}</p>`).join('')}
@@ -455,7 +581,7 @@ function render() {
 
   document.getElementById('nav-home')?.addEventListener('click', resetToHome);
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
-  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; render(); });
+  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(state.pendingMatch.link);
@@ -465,7 +591,7 @@ function render() {
     }
   });
   document.getElementById('post-home')?.addEventListener('click', resetToHome);
-  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; render(); });
+  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
 
   if (state.screen === 'match' || state.screen === 'postmatch') {
     const nodes = [...document.querySelectorAll('[data-animator]')];
@@ -473,7 +599,7 @@ function render() {
     previous.forEach((animator) => animator.stop());
     state.match.animators = nodes.map((node, index) => new SpriteSheetAnimator(node, {
       tint: state.match.fighters[index].tint,
-      flip: index === 0 ? 1 : -1,
+      flip: state.match.fighters[index].side === 'left' ? -1 : 1,
     }));
     if (state.screen === 'postmatch') {
       if (state.match.winner) {
@@ -496,6 +622,8 @@ channel?.addEventListener('message', (event) => {
     });
   }
 });
+
+bgmManager.armAutoStart();
 
 const joinPayload = parseJoinPayload();
 if (joinPayload) {
