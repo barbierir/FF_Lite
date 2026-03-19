@@ -1,7 +1,6 @@
 const STORAGE_KEYS = {
   leaderboard: 'ff-lite-leaderboard',
   playerName: 'ff-lite-player-name',
-  matchPrefix: 'ff-lite-match-',
 };
 
 const SPRITES = {
@@ -43,7 +42,8 @@ const ANIMATION_CONFIG = {
 };
 const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 'Fizzle', 'Crust', 'Toad'];
 const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel'];
-const channel = 'BroadcastChannel' in window ? new BroadcastChannel('ff-lite-match') : null;
+const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
+const POLL_INTERVAL_MS = 2000;
 
 const state = {
   screen: 'home',
@@ -55,6 +55,8 @@ const state = {
   previewAnimators: [],
   pendingStartTimer: null,
   activeMatchSubscription: null,
+  loading: false,
+  errorMessage: '',
 };
 
 class BackgroundMusicManager {
@@ -337,21 +339,99 @@ class SpriteSheetAnimator {
 }
 
 
-function getMatchStorageKey(matchId) {
-  return `${STORAGE_KEYS.matchPrefix}${matchId}`;
+
+function getBackendBaseUrl() {
+  const url = SHARED_BACKEND_CONFIG.supabaseUrl;
+  return typeof url === 'string' ? url.replace(/\/$/, '') : '';
 }
-function readStoredMatch(matchId) {
-  if (!matchId) return null;
-  try {
-    return JSON.parse(localStorage.getItem(getMatchStorageKey(matchId)) || 'null');
-  } catch {
-    return null;
+function getBackendHeaders(prefer = 'return=representation') {
+  const apiKey = SHARED_BACKEND_CONFIG.supabaseAnonKey;
+  const headers = {
+    apikey: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  if (prefer) headers.Prefer = prefer;
+  return headers;
+}
+function isBackendConfigured() {
+  return Boolean(getBackendBaseUrl() && SHARED_BACKEND_CONFIG.supabaseAnonKey);
+}
+function mapMatchToRecord(payload) {
+  return {
+    id: payload.id,
+    status: payload.status,
+    created_at: payload.createdAt,
+    player_a: payload.playerA,
+    player_b: payload.playerB || null,
+    shared_state: payload.sharedState || {},
+  };
+}
+function mapRecordToMatch(record) {
+  if (!record) return null;
+  return {
+    id: record.id,
+    status: record.status,
+    createdAt: record.created_at,
+    playerA: record.player_a,
+    playerB: record.player_b,
+    sharedState: record.shared_state || {},
+  };
+}
+async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) {
+  if (!isBackendConfigured()) {
+    throw new Error('Backend non configurato. Apri ff.config.js e inserisci supabaseUrl e supabaseAnonKey del tuo progetto Supabase.');
   }
+  const response = await fetch(`${getBackendBaseUrl()}/rest/v1/${pathname}`, {
+    method,
+    headers: getBackendHeaders(prefer),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Richiesta backend fallita (${response.status}).`);
+  }
+  if (response.status === 204) return null;
+  return response.json();
 }
-function writeStoredMatch(match) {
-  if (!match?.id) return null;
-  localStorage.setItem(getMatchStorageKey(match.id), JSON.stringify(match));
-  return match;
+async function createSharedMatch(payload) {
+  const rows = await supabaseRequest('ff_lite_matches', {
+    method: 'POST',
+    body: mapMatchToRecord(payload),
+  });
+  return mapRecordToMatch(rows?.[0]);
+}
+async function getSharedMatch(matchId) {
+  if (!matchId) return null;
+  const rows = await supabaseRequest(`ff_lite_matches?id=eq.${encodeURIComponent(matchId)}&select=*`, {
+    method: 'GET',
+    prefer: undefined,
+  });
+  return mapRecordToMatch(rows?.[0] || null);
+}
+async function updateSharedMatch(matchId, updates, filters = 'select=*') {
+  const query = `ff_lite_matches?id=eq.${encodeURIComponent(matchId)}&${filters}`;
+  const rows = await supabaseRequest(query, {
+    method: 'PATCH',
+    body: updates,
+  });
+  return Array.isArray(rows) ? rows.map(mapRecordToMatch) : [];
+}
+async function joinSharedMatch(matchId, playerB) {
+  const current = await getSharedMatch(matchId);
+  if (!current) throw new Error('Questo match non esiste più oppure il link non è valido.');
+  if (current.status === 'finished') throw new Error('Questo match è già terminato.');
+  if (current.playerB && current.playerB.id !== playerB.id) throw new Error('Questo match è già pieno o già iniziato.');
+  if (current.playerB?.id === playerB.id && current.status === 'active') return current;
+  const rows = await updateSharedMatch(matchId, {
+    player_b: playerB,
+    status: 'active',
+  }, 'status=eq.waiting&player_b=is.null&select=*');
+  if (rows[0]) return rows[0];
+  const latest = await getSharedMatch(matchId);
+  if (latest?.playerB?.id === playerB.id) return latest;
+  if (latest?.status === 'active') throw new Error('Questo match è già iniziato con un altro player B.');
+  throw new Error('Qualcun altro ha già occupato questo match.');
 }
 function clearMatchWatcher() {
   if (state.activeMatchSubscription) {
@@ -365,21 +445,28 @@ function clearPendingStartTimer() {
     state.pendingStartTimer = null;
   }
 }
-function subscribeToPendingMatch(matchId, onChange) {
+function setError(message) {
+  state.loading = false;
+  state.errorMessage = message;
+  state.screen = 'error';
+  render();
+}
+function watchSharedMatch(matchId, onChange) {
   clearMatchWatcher();
   if (!matchId) return;
   const controller = new AbortController();
   const signal = controller.signal;
-  const sync = () => {
-    if (!signal.aborted) onChange(readStoredMatch(matchId));
+  const poll = async () => {
+    if (signal.aborted) return;
+    try {
+      const match = await getSharedMatch(matchId);
+      if (!signal.aborted) onChange(match);
+    } catch (error) {
+      console.error(error);
+    }
   };
-  window.addEventListener('storage', (event) => {
-    if (event.key === getMatchStorageKey(matchId)) sync();
-  }, { signal });
-  channel?.addEventListener('message', (event) => {
-    if (event.data?.type === 'match-update' && event.data.matchId === matchId) sync();
-  }, { signal });
-  const pollId = window.setInterval(sync, 1000);
+  poll();
+  const pollId = window.setInterval(poll, POLL_INTERVAL_MS);
   signal.addEventListener('abort', () => window.clearInterval(pollId), { once: true });
   state.activeMatchSubscription = controller;
 }
@@ -390,12 +477,14 @@ function setPendingMatchState(nextPendingMatch) {
     clearMatchWatcher();
     return;
   }
-  subscribeToPendingMatch(matchId, (storedMatch) => {
-    if (!storedMatch || state.screen !== 'create') return;
-    if (storedMatch.status === 'active' && storedMatch.playerB) {
+  watchSharedMatch(matchId, (sharedMatch) => {
+    if (!sharedMatch || state.screen !== 'create') return;
+    if (sharedMatch.status === 'active' && sharedMatch.playerB) {
       const nextPayload = {
         ...state.pendingMatch.payload,
-        playerB: storedMatch.playerB,
+        status: 'active',
+        playerB: sharedMatch.playerB,
+        sharedState: sharedMatch.sharedState,
       };
       state.pendingMatch = {
         ...state.pendingMatch,
@@ -405,12 +494,12 @@ function setPendingMatchState(nextPendingMatch) {
       queueMatchStart(nextPayload);
       return;
     }
-    if (storedMatch.playerB && !state.pendingMatch.opponentJoined) {
+    if (sharedMatch.playerB && !state.pendingMatch.opponentJoined) {
       state.pendingMatch = {
         ...state.pendingMatch,
         payload: {
           ...state.pendingMatch.payload,
-          playerB: storedMatch.playerB,
+          playerB: sharedMatch.playerB,
         },
         opponentJoined: true,
       };
@@ -422,24 +511,22 @@ function makeMatchPayload(playerA = state.me) {
   const matchId = `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   return {
     id: matchId,
-    createdAt: Date.now(),
+    createdAt: new Date().toISOString(),
     status: 'waiting',
     playerA: { id: playerA.id, name: playerA.name },
+    playerB: null,
+    sharedState: {},
   };
 }
-function getJoinLink(payload) {
-  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  return `${window.location.origin}${window.location.pathname}?join=${encodeURIComponent(encoded)}`;
+function getJoinLink(matchId) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.searchParams.set('matchId', matchId);
+  return url.toString();
 }
-function parseJoinPayload() {
+function parseJoinMatchId() {
   const params = new URLSearchParams(window.location.search);
-  const join = params.get('join');
-  if (!join) return null;
-  try {
-    return JSON.parse(decodeURIComponent(escape(atob(join))));
-  } catch {
-    return null;
-  }
+  return params.get('matchId');
 }
 function resetToHome() {
   window.history.replaceState({}, '', window.location.pathname);
@@ -448,36 +535,52 @@ function resetToHome() {
   state.pendingMatch = null;
   state.match = null;
   state.logs = [];
+  state.loading = false;
+  state.errorMessage = '';
   state.screen = 'home';
   bgmManager.sync();
   render();
 }
-function startCreateFlow() {
-  const payload = makeMatchPayload();
-  writeStoredMatch(payload);
-  setPendingMatchState({ payload, link: getJoinLink(payload), opponentJoined: false });
-  state.screen = 'create';
-  bgmManager.sync();
+async function startCreateFlow() {
+  state.loading = true;
+  state.errorMessage = '';
   render();
+  try {
+    const payload = makeMatchPayload();
+    const sharedMatch = await createSharedMatch(payload);
+    setPendingMatchState({ payload: sharedMatch, link: getJoinLink(sharedMatch.id), opponentJoined: false });
+    state.screen = 'create';
+    state.loading = false;
+    bgmManager.sync();
+    render();
+  } catch (error) {
+    console.error(error);
+    setError(error.message || 'Impossibile creare il match condiviso.');
+  }
 }
-function startJoinedFlow(payload) {
-  const nextPayload = {
-    ...payload,
-    status: 'active',
-    playerB: { id: state.me.id, name: state.me.name },
-  };
-  writeStoredMatch(nextPayload);
-  setPendingMatchState({
-    payload: nextPayload,
-    link: getJoinLink(payload),
-    opponentJoined: true,
-  });
-  state.screen = 'join';
-  bgmManager.sync();
+async function startJoinedFlow(matchId) {
+  state.loading = true;
+  state.errorMessage = '';
   render();
-  channel?.postMessage({ type: 'joined', matchId: payload.id, playerB: nextPayload.playerB });
-  channel?.postMessage({ type: 'match-update', matchId: payload.id });
-  queueMatchStart(nextPayload);
+  try {
+    const sharedMatch = await joinSharedMatch(matchId, { id: state.me.id, name: state.me.name });
+    if (!sharedMatch?.playerA || !sharedMatch?.playerB) {
+      throw new Error('Il match condiviso è incompleto e non può partire.');
+    }
+    setPendingMatchState({
+      payload: sharedMatch,
+      link: getJoinLink(sharedMatch.id),
+      opponentJoined: true,
+    });
+    state.screen = 'join';
+    state.loading = false;
+    bgmManager.sync();
+    render();
+    queueMatchStart(sharedMatch);
+  } catch (error) {
+    console.error(error);
+    setError(error.message || 'Impossibile unirsi al match condiviso.');
+  }
 }
 function queueMatchStart(payload) {
   if (state.match || state.screen === 'match' || state.screen === 'postmatch' || state.pendingStartTimer) return;
@@ -544,6 +647,23 @@ function updateLeaderboardForResult(winner, loser, draw = false) {
   }
   sortLeaderboard();
   saveLeaderboard();
+}
+async function syncSharedMatchResult() {
+  if (!state.match || !isBackendConfigured()) return;
+  const winner = state.match.winner ? { id: state.match.winner.id, name: state.match.winner.name } : null;
+  try {
+    await updateSharedMatch(state.match.id, {
+      status: 'finished',
+      shared_state: {
+        finishedAt: new Date().toISOString(),
+        winner,
+        turn: state.match.turn,
+        fighters: state.match.fighters.map(({ slot, id, name, hp }) => ({ slot, id, name, hp })),
+      },
+    });
+  } catch (error) {
+    console.error('Failed to persist final match state', error);
+  }
 }
 async function playState(index, stateName, soundName = stateName) {
   const animator = state.match.animators[index];
@@ -614,6 +734,7 @@ function finishMatch() {
   }
   state.screen = 'postmatch';
   render();
+  syncSharedMatchResult();
 }
 
 function renderAnimatedPreview(label = '') {
@@ -622,6 +743,15 @@ function renderAnimatedPreview(label = '') {
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
+}
+
+function renderStatusCard(title, body) {
+  return `
+    <section class="panel">
+      <h1 class="screen-title">${title}</h1>
+      <p class="muted">${body}</p>
+      <div class="footer-actions"><button id="status-home">Home</button></div>
+    </section>`;
 }
 
 function renderHome() {
@@ -648,12 +778,12 @@ function renderCreate() {
   return `
     <section class="panel">
       <h1 class="screen-title">Crea match</h1>
-      <p class="muted">Copia e invia questo link all’avversario. Quando apre il link, il match parte automaticamente dal suo lato.</p>
+      <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
       <div class="link-box">
         <code>${state.pendingMatch.link}</code>
         <button id="copy-link">Copia link</button>
       </div>
-      <p class="muted">Se l’avversario apre il link nello stesso browser/dispositivo, questa schermata rileva la join e avvia il match anche qui.</p>
+      <p class="muted">Questa schermata controlla il match condiviso ogni pochi secondi. Quando il player B entra, il match parte automaticamente anche qui senza refresh.</p>
       <div class="goblin-preview" style="margin-top:18px;">
         ${renderAnimatedPreview('create')}
         <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
@@ -751,14 +881,17 @@ function render() {
         <button class="secondary" id="nav-create">Crea match</button>
         <button class="ghost" id="nav-leaderboard">Leaderboard</button>
       </nav>
+      ${state.loading ? renderStatusCard('Connessione al match condiviso', 'Sto sincronizzando il match Lite con il backend condiviso…') : ''}
       ${state.screen === 'home' ? renderHome() : ''}
       ${state.screen === 'create' ? renderCreate() : ''}
       ${state.screen === 'join' ? renderJoin() : ''}
       ${state.screen === 'match' || state.screen === 'postmatch' ? renderMatchOrPost() : ''}
       ${state.screen === 'leaderboard' ? renderLeaderboard() : ''}
+      ${state.screen === 'error' ? renderStatusCard('Problema match condiviso', state.errorMessage) : ''}
     </main>`;
 
   document.getElementById('nav-home')?.addEventListener('click', resetToHome);
+  document.getElementById('status-home')?.addEventListener('click', resetToHome);
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
   document.getElementById('copy-link')?.addEventListener('click', async () => {
@@ -797,29 +930,12 @@ function render() {
   }
 }
 
-channel?.addEventListener('message', (event) => {
-  if (event.data?.type === 'joined' && state.pendingMatch?.payload.id === event.data.matchId && state.screen === 'create') {
-    const nextPayload = {
-      ...state.pendingMatch.payload,
-      status: 'active',
-      playerB: event.data.playerB || { id: 'broadcast-b', name: generateFunnyName(`${event.data.matchId}:broadcast`) },
-    };
-    writeStoredMatch(nextPayload);
-    state.pendingMatch = {
-      ...state.pendingMatch,
-      payload: nextPayload,
-      opponentJoined: true,
-    };
-    queueMatchStart(nextPayload);
-  }
-});
-
 bgmManager.ensureAudio();
 bgmManager.armAutoStart();
 
-const joinPayload = parseJoinPayload();
-if (joinPayload) {
-  startJoinedFlow(joinPayload);
+const joinMatchId = parseJoinMatchId();
+if (joinMatchId) {
+  startJoinedFlow(joinMatchId);
 } else {
   render();
 }
