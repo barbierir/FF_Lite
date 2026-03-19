@@ -297,58 +297,46 @@ a { color: #fde68a; }
   transition: width 260ms ease;
 }
 
-.sprite-stage {
-  position: relative;
+.fighter-slot {
   width: min(100%, clamp(220px, 28vw, 340px));
+}
+.fighter-transform-positioner {
+  position: relative;
+  width: 100%;
   aspect-ratio: 1;
   margin: 0;
-  border-radius: 24px;
   overflow: visible;
-  background: radial-gradient(circle at center, rgba(255,255,255,0.08), rgba(255,255,255,0.02) 42%, transparent 65%);
 }
-.sprite-stage::before,
-.sprite-stage::after {
-  content: "";
-  position: absolute;
-  pointer-events: none;
+.sprite-render {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  border-radius: 24px;
+  isolation: isolate;
 }
-.sprite-stage::before {
-  left: 50%;
-  bottom: 7%;
-  width: 72%;
-  height: 18%;
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(0,0,0,0.42), rgba(0,0,0,0.08) 58%, transparent 75%);
-  filter: blur(4px);
-  z-index: 0;
-}
-.sprite-stage::after {
-  inset: auto 13% 2% 13%;
-  height: 56%;
-  border-radius: 50%;
-  background: linear-gradient(180deg, rgba(255,255,255,0.06), transparent 55%);
-  z-index: 1;
-}
-.sprite, .sprite-fallback {
+.sprite,
+.sprite-tint,
+.sprite-fallback,
+.sprite-effects {
   position: absolute;
   inset: 0;
 }
 .sprite {
-  z-index: 2;
+  z-index: 1;
   background-repeat: no-repeat;
   image-rendering: pixelated;
   transform: scale(var(--flip, 1), 1);
   transform-origin: center;
   filter: drop-shadow(0 16px 18px rgba(0, 0, 0, 0.36));
 }
-.sprite::after {
-  content: "";
-  position: absolute;
-  inset: 0;
+.sprite-tint {
+  z-index: 2;
+  transform: scale(var(--flip, 1), 1);
+  transform-origin: center;
   background-color: color-mix(in srgb, var(--tint) 45%, transparent);
-  mix-blend-mode: screen;
-  opacity: 0.9;
+  opacity: 0.72;
+  pointer-events: none;
   -webkit-mask-image: var(--sprite-image);
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-size: var(--sprite-size, 400% 400%);
@@ -358,7 +346,34 @@ a { color: #fde68a; }
   mask-size: var(--sprite-size, 400% 400%);
   mask-position: var(--sprite-position, 0% 0%);
 }
+.sprite-effects {
+  z-index: 1;
+  pointer-events: none;
+}
+.sprite-effects::before,
+.sprite-effects::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+.sprite-effects::before {
+  left: 50%;
+  bottom: 7%;
+  width: 72%;
+  height: 18%;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(0,0,0,0.42), rgba(0,0,0,0.08) 58%, transparent 75%);
+  filter: blur(4px);
+}
+.sprite-effects::after {
+  inset: auto 13% 2% 13%;
+  height: 56%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), transparent 55%);
+}
 .sprite-fallback {
+  z-index: 3;
   display: grid;
   place-items: center;
   font-size: 0.95rem;
@@ -462,7 +477,7 @@ a { color: #fde68a; }
     width: 100%;
     text-align: center;
   }
-  .sprite-stage {
+  .fighter-slot {
     width: min(100%, 280px);
   }
   .battle-log-wrap,

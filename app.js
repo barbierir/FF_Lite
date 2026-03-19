@@ -541,9 +541,15 @@ function renderMatchOrPost() {
                 <div class="nameplate">${fighter.name}</div>
                 <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}</div>
               </div>
-              <div class="sprite-stage" data-animator="${index}" style="--tint:${fighter.tint};--flip:${fighter.side === 'left' ? -1 : 1}">
-                <div class="sprite"></div>
-                <div class="sprite-fallback" hidden></div>
+              <div class="fighter-slot">
+                <div class="fighter-transform-positioner">
+                  <div class="sprite-render" data-animator="${index}" style="--tint:${fighter.tint};--flip:${fighter.side === 'left' ? -1 : 1}">
+                    <div class="sprite"></div>
+                    <div class="sprite-tint" aria-hidden="true"></div>
+                    <div class="sprite-fallback" hidden></div>
+                  </div>
+                  <div class="sprite-effects" aria-hidden="true"></div>
+                </div>
               </div>
               <div class="health-bar"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
             </article>`).join('')}
