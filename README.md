@@ -61,6 +61,13 @@ create policy "lite matches are updatable"
 ### 2. Add runtime config
 
 The repo now includes a placeholder `ff.config.js`. Edit it directly with your project values:
+Copy `ff.config.example.js` to `ff.config.js` and fill in your project values:
+
+```bash
+cp ff.config.example.js ff.config.js
+```
+
+Then edit `ff.config.js`:
 
 ```js
 window.FF_LITE_CONFIG = {

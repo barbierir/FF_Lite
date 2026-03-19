@@ -381,6 +381,7 @@ function mapRecordToMatch(record) {
 async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) {
   if (!isBackendConfigured()) {
     throw new Error('Backend non configurato. Apri ff.config.js e inserisci supabaseUrl e supabaseAnonKey del tuo progetto Supabase.');
+    throw new Error('Backend non configurato. Aggiungi supabaseUrl e supabaseAnonKey in ff.config.js.');
   }
   const response = await fetch(`${getBackendBaseUrl()}/rest/v1/${pathname}`, {
     method,
