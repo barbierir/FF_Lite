@@ -199,9 +199,8 @@ a { color: #fde68a; }
   background:
     linear-gradient(180deg, rgba(8, 10, 20, 0.12), rgba(8, 10, 20, 0.58)),
     radial-gradient(circle at top, rgba(255,255,255,0.2), transparent 35%),
-    linear-gradient(180deg, rgba(91, 33, 182, 0.28), rgba(22, 101, 52, 0.34) 58%, rgba(39, 24, 56, 0.88)),
     var(--arena-image, none);
-  background-size: cover, auto, auto, cover;
+  background-size: cover, auto, cover;
   background-position: center;
 }
 .arena-floor {
