@@ -116,37 +116,23 @@ a { color: #fde68a; }
   width: min(100%, 320px);
   aspect-ratio: 1;
   position: relative;
+  display: grid;
+  place-items: center;
   border-radius: 30px;
   overflow: hidden;
   border: 1px solid rgba(255,255,255,0.12);
   background: linear-gradient(180deg, rgba(250, 204, 21, 0.08), rgba(0,0,0,0.28));
 }
-.goblin-frame::before,
-.goblin-frame::after {
-  content: "";
-  position: absolute;
-  inset: 0;
+.sprite-render-home .sprite-canvas,
+.sprite-render-home .sprite-fallback {
+  inset: 7%;
 }
-.goblin-frame::before {
-  background: var(--image, linear-gradient(135deg, #4d7c0f, #166534));
-  background-size: cover;
-  background-position: center;
-  image-rendering: pixelated;
+.sprite-render-home .sprite-canvas {
+  width: calc(100% - 14%);
+  height: calc(100% - 14%);
+  object-fit: contain;
 }
-.goblin-frame::after {
-  background: color-mix(in srgb, var(--tint) 35%, transparent);
-  mix-blend-mode: screen;
-}
-.goblin-frame.placeholder::before {
-  background-image:
-    linear-gradient(135deg, rgba(255,255,255,0.08) 25%, transparent 25%),
-    linear-gradient(225deg, rgba(255,255,255,0.08) 25%, transparent 25%),
-    linear-gradient(315deg, rgba(255,255,255,0.08) 25%, transparent 25%),
-    linear-gradient(45deg, rgba(255,255,255,0.08) 25%, transparent 25%),
-    linear-gradient(135deg, #4d7c0f, #166534);
-  background-position: 12px 0, 12px 0, 0 0, 0 0, center;
-  background-size: 12px 12px, 12px 12px, 12px 12px, 12px 12px, cover;
-}
+
 .nameplate {
   font-size: 1.3rem;
   font-weight: 800;
@@ -315,36 +301,18 @@ a { color: #fde68a; }
   border-radius: 24px;
   isolation: isolate;
 }
-.sprite,
-.sprite-tint,
+.sprite-canvas,
 .sprite-fallback,
 .sprite-effects {
   position: absolute;
   inset: 0;
 }
-.sprite {
+.sprite-canvas {
   z-index: 1;
-  background-repeat: no-repeat;
+  width: 100%;
+  height: 100%;
   image-rendering: pixelated;
-  transform: scale(var(--flip, 1), 1);
-  transform-origin: center;
   filter: drop-shadow(0 16px 18px rgba(0, 0, 0, 0.36));
-}
-.sprite-tint {
-  z-index: 2;
-  transform: scale(var(--flip, 1), 1);
-  transform-origin: center;
-  background-color: color-mix(in srgb, var(--tint) 45%, transparent);
-  opacity: 0.72;
-  pointer-events: none;
-  -webkit-mask-image: var(--sprite-image);
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: var(--sprite-size, 400% 400%);
-  -webkit-mask-position: var(--sprite-position, 0% 0%);
-  mask-image: var(--sprite-image);
-  mask-repeat: no-repeat;
-  mask-size: var(--sprite-size, 400% 400%);
-  mask-position: var(--sprite-position, 0% 0%);
 }
 .sprite-effects {
   z-index: 1;
