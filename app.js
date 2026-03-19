@@ -230,10 +230,8 @@ class SpriteSheetAnimator {
     this.frameWidth = 0;
     this.frameHeight = 0;
     this.ctx = this.canvas?.getContext('2d', { willReadFrequently: true });
-    this.sourceBuffer = document.createElement('canvas');
-    this.sourceBufferCtx = this.sourceBuffer.getContext('2d', { willReadFrequently: true });
-    this.tintBuffer = document.createElement('canvas');
-    this.tintBufferCtx = this.tintBuffer.getContext('2d', { willReadFrequently: true });
+    this.offscreenCanvas = document.createElement('canvas');
+    this.offscreenCtx = this.offscreenCanvas.getContext('2d', { willReadFrequently: true });
     this.setTint(this.tint);
     this.setFlip(this.flip);
   }
@@ -303,36 +301,36 @@ class SpriteSheetAnimator {
     this.tick();
   }
   resizeCanvases() {
-    for (const canvas of [this.canvas, this.sourceBuffer, this.tintBuffer]) {
+    for (const canvas of [this.canvas, this.offscreenCanvas]) {
       if (!canvas) continue;
       canvas.width = this.frameWidth;
       canvas.height = this.frameHeight;
     }
   }
   drawFrame() {
-    if (!this.ctx || !this.sourceBufferCtx || !this.tintBufferCtx || !this.image) return;
+    if (!this.ctx || !this.offscreenCtx || !this.image) return;
     const col = this.frame % this.cols;
     const row = Math.floor(this.frame / this.cols);
     const sx = col * this.frameWidth;
     const sy = row * this.frameHeight;
 
-    this.sourceBufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
-    this.sourceBufferCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
+    this.offscreenCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
+    this.offscreenCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
 
-    const frame = this.sourceBufferCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
+    const frame = this.offscreenCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
     const { data } = frame;
     const tint = hexToRgb(this.tint);
 
     for (let i = 0; i < data.length; i += 4) {
       const alpha = data[i + 3];
       if (alpha === 0) continue;
-      data[i] = Math.round((data[i] * 0.55) + (tint.r * 0.45));
-      data[i + 1] = Math.round((data[i + 1] * 0.55) + (tint.g * 0.45));
-      data[i + 2] = Math.round((data[i + 2] * 0.55) + (tint.b * 0.45));
+      const brightness = Math.max(data[i], data[i + 1], data[i + 2]) / 255;
+      data[i] = Math.round(tint.r * brightness);
+      data[i + 1] = Math.round(tint.g * brightness);
+      data[i + 2] = Math.round(tint.b * brightness);
     }
 
-    this.tintBufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
-    this.tintBufferCtx.putImageData(frame, 0, 0);
+    this.offscreenCtx.putImageData(frame, 0, 0);
 
     this.ctx.clearRect(0, 0, this.frameWidth, this.frameHeight);
     this.ctx.save();
@@ -340,7 +338,7 @@ class SpriteSheetAnimator {
       this.ctx.translate(this.frameWidth, 0);
       this.ctx.scale(-1, 1);
     }
-    this.ctx.drawImage(this.tintBuffer, 0, 0);
+    this.ctx.drawImage(this.offscreenCanvas, 0, 0);
     this.ctx.restore();
   }
   tick() {
@@ -648,7 +646,8 @@ function renderMatchOrPost() {
         ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? 'Il perdente resta nella posa di sconfitta finale.' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
       </div>
       <div class="arena-shell">
-        <section class="arena" style="--arena-image:url('${ARENA_BACKGROUND}')">
+        <section class="arena">
+          <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
           <div class="arena-floor" aria-hidden="true"></div>
           ${state.match.fighters.map((fighter, index) => `
             <article class="fighter fighter-${fighter.side}">
