@@ -44,6 +44,14 @@ const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 
 const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel'];
 const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
+const PALETTE_VARIANTS = [
+  { hue: 0, sat: 1, bright: 1 },
+  { hue: 20, sat: 1.1, bright: 1 },
+  { hue: -20, sat: 1.05, bright: 0.95 },
+  { hue: 45, sat: 1.15, bright: 1.05 },
+  { hue: -45, sat: 1.1, bright: 0.9 },
+  { hue: 90, sat: 1.2, bright: 1 },
+];
 
 const state = {
   screen: 'home',
@@ -172,13 +180,85 @@ class SoundEffectsManager {
 const bgmManager = new BackgroundMusicManager(AUDIO_CONFIG.bgm);
 const sfxManager = new SoundEffectsManager(AUDIO_CONFIG.sfx);
 
-function hashString(input) {
-  let hash = 2166136261;
-  for (const char of input) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
+function hashString(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
   }
-  return hash >>> 0;
+  return h >>> 0;
+}
+function getVariant(matchId, playerId, creatureId) {
+  const seed = `${matchId}:${playerId}:${creatureId}`;
+  return PALETTE_VARIANTS[hashString(seed) % PALETTE_VARIANTS.length];
+}
+function rgbToHsl(r, g, b) {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+        break;
+      case g:
+        h = ((b - r) / d + 2) * 60;
+        break;
+      default:
+        h = ((r - g) / d + 4) * 60;
+        break;
+    }
+  }
+  return [h, s, l];
+}
+function hueToRgb(p, q, t) {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1 / 6) return p + (q - p) * 6 * t;
+  if (t < 1 / 2) return q;
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+  return p;
+}
+function hslToRgb(h, s, l) {
+  const hue = ((h % 360) + 360) % 360 / 360;
+  if (s === 0) {
+    const gray = Math.round(l * 255);
+    return [gray, gray, gray];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [
+    Math.round(hueToRgb(p, q, hue + 1 / 3) * 255),
+    Math.round(hueToRgb(p, q, hue) * 255),
+    Math.round(hueToRgb(p, q, hue - 1 / 3) * 255),
+  ];
+}
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+function applyPaletteVariant(imageData, variant) {
+  if (!variant || variant.hue === 0 && variant.sat === 1 && variant.bright === 1) return imageData;
+  const { data } = imageData;
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    if (alpha === 0) continue;
+    const [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
+    const nextH = h + variant.hue;
+    const nextS = clamp(s * variant.sat, 0, 1);
+    const nextL = clamp(l * variant.bright, 0, 1);
+    const [r, g, b] = hslToRgb(nextH, nextS, nextL);
+    data[i] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+  }
+  return imageData;
 }
 function pickDeterministic(list, seed) {
   return list[hashString(seed) % list.length];
@@ -227,6 +307,9 @@ class SpriteSheetAnimator {
     this.frameWidth = 0;
     this.frameHeight = 0;
     this.ctx = this.canvas?.getContext('2d', { willReadFrequently: true });
+    this.variant = opts.variant || null;
+    this.bufferCanvas = document.createElement('canvas');
+    this.bufferCtx = this.bufferCanvas.getContext('2d', { willReadFrequently: true });
     this.setFlip(this.flip);
   }
   setFlip(flip) {
@@ -291,19 +374,25 @@ class SpriteSheetAnimator {
     this.tick();
   }
   resizeCanvases() {
-    for (const canvas of [this.canvas]) {
+    for (const canvas of [this.canvas, this.bufferCanvas]) {
       if (!canvas) continue;
       canvas.width = this.frameWidth;
       canvas.height = this.frameHeight;
     }
   }
   drawFrame() {
-    if (!this.ctx || !this.image) return;
+    if (!this.ctx || !this.image || !this.bufferCtx) return;
     const col = this.frame % this.cols;
     const row = Math.floor(this.frame / this.cols);
     const sx = col * this.frameWidth;
     const sy = row * this.frameHeight;
 
+    this.bufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
+    this.bufferCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
+    if (this.variant) {
+      const imageData = this.bufferCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
+      this.bufferCtx.putImageData(applyPaletteVariant(imageData, this.variant), 0, 0);
+    }
 
     this.ctx.clearRect(0, 0, this.frameWidth, this.frameHeight);
     this.ctx.save();
@@ -311,7 +400,7 @@ class SpriteSheetAnimator {
       this.ctx.translate(this.frameWidth, 0);
       this.ctx.scale(-1, 1);
     }
-    this.ctx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
+    this.ctx.drawImage(this.bufferCanvas, 0, 0, this.frameWidth, this.frameHeight);
     this.ctx.restore();
   }
   tick() {
@@ -603,8 +692,8 @@ function createResolvedMatch(payload) {
   return {
     id: payload.id,
     fighters: [
-      { slot: 'A', side: 'left', ...playerA, hp: 100, state: 'idle' },
-      { slot: 'B', side: 'right', ...playerB, hp: 100, state: 'idle' },
+      { slot: 'A', side: 'left', creatureId: 'goblin', variant: getVariant(payload.id, playerA.id, 'goblin'), ...playerA, hp: 100, state: 'idle' },
+      { slot: 'B', side: 'right', creatureId: 'goblin', variant: getVariant(payload.id, playerB.id, 'goblin'), ...playerB, hp: 100, state: 'idle' },
     ],
     turn: 0,
     finished: false,
@@ -917,6 +1006,7 @@ function render() {
     previous.forEach((animator) => animator.stop());
     state.match.animators = nodes.map((node, index) => new SpriteSheetAnimator(node, {
       flip: state.match.fighters[index].side === 'left' ? -1 : 1,
+      variant: state.match.fighters[index].variant,
     }));
     if (state.screen === 'postmatch') {
       if (state.match.winner) {
