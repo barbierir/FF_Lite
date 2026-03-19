@@ -230,14 +230,15 @@ class SpriteSheetAnimator {
     this.frameWidth = 0;
     this.frameHeight = 0;
     this.ctx = this.canvas?.getContext('2d', { willReadFrequently: true });
-    this.buffer = document.createElement('canvas');
-    this.bufferCtx = this.buffer.getContext('2d', { willReadFrequently: true });
+    this.sourceBuffer = document.createElement('canvas');
+    this.sourceBufferCtx = this.sourceBuffer.getContext('2d', { willReadFrequently: true });
+    this.tintBuffer = document.createElement('canvas');
+    this.tintBufferCtx = this.tintBuffer.getContext('2d', { willReadFrequently: true });
     this.setTint(this.tint);
     this.setFlip(this.flip);
   }
   setTint(tint) {
     this.tint = tint;
-    this.host.style.setProperty('--tint', tint);
     if (this.current && this.image) this.drawFrame();
   }
   setFlip(flip) {
@@ -302,23 +303,26 @@ class SpriteSheetAnimator {
     this.tick();
   }
   resizeCanvases() {
-    for (const canvas of [this.canvas, this.buffer]) {
+    for (const canvas of [this.canvas, this.sourceBuffer, this.tintBuffer]) {
       if (!canvas) continue;
       canvas.width = this.frameWidth;
       canvas.height = this.frameHeight;
     }
   }
   drawFrame() {
-    if (!this.ctx || !this.bufferCtx || !this.image) return;
+    if (!this.ctx || !this.sourceBufferCtx || !this.tintBufferCtx || !this.image) return;
     const col = this.frame % this.cols;
     const row = Math.floor(this.frame / this.cols);
     const sx = col * this.frameWidth;
     const sy = row * this.frameHeight;
-    this.bufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
-    this.bufferCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
-    const frame = this.bufferCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
+
+    this.sourceBufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
+    this.sourceBufferCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
+
+    const frame = this.sourceBufferCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
     const { data } = frame;
     const tint = hexToRgb(this.tint);
+
     for (let i = 0; i < data.length; i += 4) {
       const alpha = data[i + 3];
       if (alpha === 0) continue;
@@ -326,14 +330,17 @@ class SpriteSheetAnimator {
       data[i + 1] = Math.round((data[i + 1] * 0.55) + (tint.g * 0.45));
       data[i + 2] = Math.round((data[i + 2] * 0.55) + (tint.b * 0.45));
     }
-    this.bufferCtx.putImageData(frame, 0, 0);
+
+    this.tintBufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
+    this.tintBufferCtx.putImageData(frame, 0, 0);
+
     this.ctx.clearRect(0, 0, this.frameWidth, this.frameHeight);
     this.ctx.save();
     if (this.flip === -1) {
       this.ctx.translate(this.frameWidth, 0);
       this.ctx.scale(-1, 1);
     }
-    this.ctx.drawImage(this.buffer, 0, 0);
+    this.ctx.drawImage(this.tintBuffer, 0, 0);
     this.ctx.restore();
   }
   tick() {
@@ -566,7 +573,7 @@ function finishMatch() {
 
 function renderAnimatedPreview(tint, label = '') {
   return `
-    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}" style="--tint:${tint}">
+    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}" data-tint="${tint}">
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
@@ -651,7 +658,7 @@ function renderMatchOrPost() {
               </div>
               <div class="fighter-slot">
                 <div class="fighter-transform-positioner">
-                  <div class="sprite-render" data-animator="${index}" style="--tint:${fighter.tint};--flip:${fighter.side === 'left' ? -1 : 1}">
+                  <div class="sprite-render" data-animator="${index}">
                     <canvas class="sprite-canvas" aria-hidden="true"></canvas>
                     <div class="sprite-fallback" hidden></div>
                   </div>
@@ -721,7 +728,7 @@ function render() {
   document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
-    const animator = new SpriteSheetAnimator(node, { tint: node.style.getPropertyValue('--tint') || state.me.tint });
+    const animator = new SpriteSheetAnimator(node, { tint: node.dataset.tint || state.me.tint });
     state.previewAnimators.push(animator);
     animator.playSheet(HOME_ANIMATION);
   });
