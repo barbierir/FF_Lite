@@ -220,6 +220,8 @@ class SpriteSheetAnimator {
     clearTimeout(this.timer);
     this.sprite.style.backgroundImage = `url(${src})`;
     this.sprite.style.backgroundSize = `${this.cols * 100}% ${this.rows * 100}%`;
+    this.sprite.style.setProperty('--sprite-image', `url(${src})`);
+    this.sprite.style.setProperty('--sprite-size', `${this.cols * 100}% ${this.rows * 100}%`);
     this.host.dataset.state = stateName;
     this.preloadAndStart();
   }
@@ -243,7 +245,9 @@ class SpriteSheetAnimator {
   applyFrame() {
     const col = this.frame % this.cols;
     const row = Math.floor(this.frame / this.cols);
-    this.sprite.style.backgroundPosition = `${(col / (this.cols - 1)) * 100}% ${(row / (this.rows - 1)) * 100}%`;
+    const position = `${(col / (this.cols - 1)) * 100}% ${(row / (this.rows - 1)) * 100}%`;
+    this.sprite.style.backgroundPosition = position;
+    this.sprite.style.setProperty('--sprite-position', position);
   }
   tick() {
     const { config } = this.current;
@@ -521,13 +525,16 @@ function renderMatchOrPost() {
     : 'Draw!';
   return `
     <section class="panel match-layout">
-      <div>
-        <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match automatico'}</h1>
-        <p class="muted">Turno ${state.match.turn}. La potenza aumenta ogni round, quindi il caos non dura troppo.</p>
-        ${isPost ? `<div class="result-banner"><strong>${result}</strong><br/>${state.match.winner ? 'Il perdente resta nella posa di sconfitta finale.' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
+      <div class="match-head">
+        <div class="match-meta">
+          <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match automatico'}</h1>
+          <p class="muted">Turno ${state.match.turn}. La potenza aumenta ogni round, quindi il caos non dura troppo.</p>
+        </div>
+        ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? 'Il perdente resta nella posa di sconfitta finale.' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
       </div>
       <div class="arena-shell">
         <section class="arena" style="--arena-image:url('${ARENA_BACKGROUND}')">
+          <div class="arena-floor" aria-hidden="true"></div>
           ${state.match.fighters.map((fighter, index) => `
             <article class="fighter fighter-${fighter.side}">
               <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}">
@@ -542,10 +549,15 @@ function renderMatchOrPost() {
             </article>`).join('')}
         </section>
       </div>
-      <div class="log-panel" id="log-lines">
-        ${state.logs.map((line) => `<p class="log-line">${line}</p>`).join('')}
+      <div class="battle-log-wrap">
+        <div class="log-panel">
+          <p class="log-heading">Battle log</p>
+          <div id="log-lines">
+            ${state.logs.map((line) => `<p class="log-line">${line}</p>`).join('')}
+          </div>
+        </div>
+        ${isPost ? `<div class="footer-actions"><button id="post-home">Home</button><button class="secondary" id="post-leaderboard">Leaderboard</button></div>` : ''}
       </div>
-      ${isPost ? `<div class="footer-actions"><button id="post-home">Home</button><button class="secondary" id="post-leaderboard">Leaderboard</button></div>` : ''}
     </section>`;
 }
 function renderLeaderboard() {
