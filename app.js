@@ -1,7 +1,6 @@
 const STORAGE_KEYS = {
   leaderboard: 'ff-lite-leaderboard',
   playerName: 'ff-lite-player-name',
-  playerTint: 'ff-lite-player-tint',
 };
 
 const SPRITES = {
@@ -43,7 +42,6 @@ const ANIMATION_CONFIG = {
 };
 const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 'Fizzle', 'Crust', 'Toad'];
 const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel'];
-const TINTS = ['#22c55e', '#84cc16', '#f59e0b', '#38bdf8', '#f472b6', '#a78bfa', '#fb7185'];
 const channel = 'BroadcastChannel' in window ? new BroadcastChannel('ff-lite-match') : null;
 
 const state = {
@@ -185,15 +183,10 @@ function generateFunnyName(seed = crypto.randomUUID()) {
   const suffix = pickDeterministic(NAME_SUFFIXES, `${seed}:s`);
   return `${prefix}${suffix}`;
 }
-function generateTint(seed = crypto.randomUUID()) {
-  return pickDeterministic(TINTS, `${seed}:t`);
-}
 function loadLocalPlayer() {
   const name = localStorage.getItem(STORAGE_KEYS.playerName) || generateFunnyName();
-  const tint = localStorage.getItem(STORAGE_KEYS.playerTint) || generateTint(name);
   localStorage.setItem(STORAGE_KEYS.playerName, name);
-  localStorage.setItem(STORAGE_KEYS.playerTint, tint);
-  return { id: crypto.randomUUID(), name, tint };
+  return { id: crypto.randomUUID(), name };
 }
 function loadLeaderboard() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.leaderboard) || '[]'); }
@@ -225,19 +218,11 @@ class SpriteSheetAnimator {
     this.ended = null;
     this.image = null;
     this.imageCache = new Map();
-    this.tint = opts.tint || '#22c55e';
     this.flip = opts.flip ?? 1;
     this.frameWidth = 0;
     this.frameHeight = 0;
     this.ctx = this.canvas?.getContext('2d', { willReadFrequently: true });
-    this.offscreenCanvas = document.createElement('canvas');
-    this.offscreenCtx = this.offscreenCanvas.getContext('2d', { willReadFrequently: true });
-    this.setTint(this.tint);
     this.setFlip(this.flip);
-  }
-  setTint(tint) {
-    this.tint = tint;
-    if (this.current && this.image) this.drawFrame();
   }
   setFlip(flip) {
     this.flip = flip;
@@ -301,36 +286,19 @@ class SpriteSheetAnimator {
     this.tick();
   }
   resizeCanvases() {
-    for (const canvas of [this.canvas, this.offscreenCanvas]) {
+    for (const canvas of [this.canvas]) {
       if (!canvas) continue;
       canvas.width = this.frameWidth;
       canvas.height = this.frameHeight;
     }
   }
   drawFrame() {
-    if (!this.ctx || !this.offscreenCtx || !this.image) return;
+    if (!this.ctx || !this.image) return;
     const col = this.frame % this.cols;
     const row = Math.floor(this.frame / this.cols);
     const sx = col * this.frameWidth;
     const sy = row * this.frameHeight;
 
-    this.offscreenCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
-    this.offscreenCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
-
-    const frame = this.offscreenCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
-    const { data } = frame;
-    const tint = hexToRgb(this.tint);
-
-    for (let i = 0; i < data.length; i += 4) {
-      const alpha = data[i + 3];
-      if (alpha === 0) continue;
-      const brightness = Math.max(data[i], data[i + 1], data[i + 2]) / 255;
-      data[i] = Math.round(tint.r * brightness);
-      data[i + 1] = Math.round(tint.g * brightness);
-      data[i + 2] = Math.round(tint.b * brightness);
-    }
-
-    this.offscreenCtx.putImageData(frame, 0, 0);
 
     this.ctx.clearRect(0, 0, this.frameWidth, this.frameHeight);
     this.ctx.save();
@@ -338,7 +306,7 @@ class SpriteSheetAnimator {
       this.ctx.translate(this.frameWidth, 0);
       this.ctx.scale(-1, 1);
     }
-    this.ctx.drawImage(this.offscreenCanvas, 0, 0);
+    this.ctx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
     this.ctx.restore();
   }
   tick() {
@@ -365,19 +333,6 @@ class SpriteSheetAnimator {
   stop() { clearTimeout(this.timer); }
 }
 
-function hexToRgb(hex) {
-  const normalized = (hex || '').replace('#', '').trim();
-  const full = normalized.length === 3
-    ? normalized.split('').map((char) => char + char).join('')
-    : normalized.padEnd(6, '0').slice(0, 6);
-  const value = Number.parseInt(full, 16);
-  if (Number.isNaN(value)) return { r: 34, g: 197, b: 94 };
-  return {
-    r: (value >> 16) & 255,
-    g: (value >> 8) & 255,
-    b: value & 255,
-  };
-}
 
 function makeMatchPayload(playerA = state.me) {
   const matchId = `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -385,7 +340,7 @@ function makeMatchPayload(playerA = state.me) {
   return {
     id: matchId,
     createdAt: Date.now(),
-    playerA: { id: playerA.id, name: playerA.name, tint: playerA.tint, seed: hostSeed },
+    playerA: { id: playerA.id, name: playerA.name, seed: hostSeed },
   };
 }
 function getJoinLink(payload) {
@@ -423,7 +378,7 @@ function startJoinedFlow(payload) {
   state.pendingMatch = {
     payload: {
       ...payload,
-      playerB: { id: state.me.id, name: state.me.name, tint: state.me.tint, seed: playerBSeed },
+      playerB: { id: state.me.id, name: state.me.name, seed: playerBSeed },
     },
     link: getJoinLink(payload),
     opponentJoined: true,
@@ -448,7 +403,7 @@ function queueMatchStart(payload) {
 function createResolvedMatch(payload) {
   const playerA = payload.playerA;
   const playerB = payload.playerB || {
-    id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`), tint: generateTint(`${payload.id}:fallback`), seed: `${payload.id}:fallback`,
+    id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`), seed: `${payload.id}:fallback`,
   };
   return {
     id: payload.id,
@@ -569,9 +524,9 @@ function finishMatch() {
   render();
 }
 
-function renderAnimatedPreview(tint, label = '') {
+function renderAnimatedPreview(label = '') {
   return `
-    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}" data-tint="${tint}">
+    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}">
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
@@ -591,9 +546,9 @@ function renderHome() {
         </div>
       </div>
       <div class="goblin-preview">
-        ${renderAnimatedPreview(state.me.tint, 'home')}
+        ${renderAnimatedPreview('home')}
         <div class="nameplate">${state.me.name}</div>
-        <div class="subtext">Tinta casuale fissata per questa sessione: <span style="color:${state.me.tint}">${state.me.tint}</span></div>
+        <div class="subtext">Sprite originale del goblin senza variazioni colore.</div>
       </div>
     </section>`;
 }
@@ -608,7 +563,7 @@ function renderCreate() {
       </div>
       <p class="muted">Se l’avversario apre il link nello stesso browser/dispositivo, questa schermata rileva la join e avvia il match anche qui.</p>
       <div class="goblin-preview" style="margin-top:18px;">
-        ${renderAnimatedPreview(state.me.tint, 'create')}
+        ${renderAnimatedPreview('create')}
         <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
       </div>
     </section>`;
@@ -621,11 +576,11 @@ function renderJoin() {
         <h1 class="screen-title">Avversario trovato</h1>
         <p class="muted">Sei il player B. I goblin stanno entrando nell’arena…</p>
         <div class="info-card">
-          <strong>Host</strong><br/>${state.pendingMatch.payload.playerA.name}<br/><span style="color:${state.pendingMatch.payload.playerA.tint}">${state.pendingMatch.payload.playerA.tint}</span>
+          <strong>Host</strong><br/>${state.pendingMatch.payload.playerA.name}
         </div>
       </div>
       <div class="goblin-preview">
-        ${renderAnimatedPreview(playerB.tint, 'join')}
+        ${renderAnimatedPreview('join')}
         <div class="nameplate">${playerB.name}</div>
         <div class="subtext">Preparati: il match parte da solo fra un attimo.</div>
       </div>
@@ -661,7 +616,6 @@ function renderMatchOrPost() {
                     <canvas class="sprite-canvas" aria-hidden="true"></canvas>
                     <div class="sprite-fallback" hidden></div>
                   </div>
-                  <div class="sprite-effects" aria-hidden="true"></div>
                 </div>
               </div>
               <div class="health-bar"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
@@ -727,7 +681,7 @@ function render() {
   document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
-    const animator = new SpriteSheetAnimator(node, { tint: node.dataset.tint || state.me.tint });
+    const animator = new SpriteSheetAnimator(node);
     state.previewAnimators.push(animator);
     animator.playSheet(HOME_ANIMATION);
   });
@@ -737,7 +691,6 @@ function render() {
     const previous = state.match.animators || [];
     previous.forEach((animator) => animator.stop());
     state.match.animators = nodes.map((node, index) => new SpriteSheetAnimator(node, {
-      tint: state.match.fighters[index].tint,
       flip: state.match.fighters[index].side === 'left' ? -1 : 1,
     }));
     if (state.screen === 'postmatch') {
@@ -757,7 +710,7 @@ channel?.addEventListener('message', (event) => {
     state.pendingMatch.opponentJoined = true;
     queueMatchStart({
       ...state.pendingMatch.payload,
-      playerB: event.data.playerB || { id: 'broadcast-b', name: generateFunnyName(`${event.data.matchId}:broadcast`), tint: generateTint(`${event.data.matchId}:broadcast`), seed: `${event.data.matchId}:broadcast` },
+      playerB: event.data.playerB || { id: 'broadcast-b', name: generateFunnyName(`${event.data.matchId}:broadcast`), seed: `${event.data.matchId}:broadcast` },
     });
   }
 });
