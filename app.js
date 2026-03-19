@@ -478,7 +478,7 @@ function renderHome() {
         </div>
       </div>
       <div class="goblin-preview">
-        <div class="goblin-frame placeholder" style="${imageStyle}"></div>
+        <div class="goblin-frame" style="${imageStyle}"></div>
         <div class="nameplate">${state.me.name}</div>
         <div class="subtext">Tinta casuale fissata per questa sessione: <span style="color:${state.me.tint}">${state.me.tint}</span></div>
       </div>
@@ -495,7 +495,7 @@ function renderCreate() {
       </div>
       <p class="muted">Se l’avversario apre il link nello stesso browser/dispositivo, questa schermata rileva la join e avvia il match anche qui.</p>
       <div class="goblin-preview" style="margin-top:18px;">
-        <div class="goblin-frame placeholder" style="--tint:${state.me.tint};--image:url(${HOME_IMAGE});"></div>
+        <div class="goblin-frame" style="--tint:${state.me.tint};--image:url(${HOME_IMAGE});"></div>
         <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
       </div>
     </section>`;
@@ -512,7 +512,7 @@ function renderJoin() {
         </div>
       </div>
       <div class="goblin-preview">
-        <div class="goblin-frame placeholder" style="--tint:${playerB.tint};--image:url(${HOME_IMAGE});"></div>
+        <div class="goblin-frame" style="--tint:${playerB.tint};--image:url(${HOME_IMAGE});"></div>
         <div class="nameplate">${playerB.name}</div>
         <div class="subtext">Preparati: il match parte da solo fra un attimo.</div>
       </div>
