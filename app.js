@@ -14,6 +14,7 @@ const SPRITES = {
   defeat: 'assets/goblin/defeat.png',
 };
 const HOME_IMAGE = 'assets/goblin/idle_choose.png';
+const HOME_ANIMATION = { src: HOME_IMAGE, rows: 4, cols: 4, loop: true, frameDuration: 150 };
 const ARENA_BACKGROUND = '/images/match_bg.png'; // Placeholder image path: replace/add the real arena background manually later.
 const AUDIO_CONFIG = {
   bgm: {
@@ -52,6 +53,7 @@ const state = {
   match: null,
   logs: [],
   leaderboard: loadLeaderboard(),
+  previewAnimators: [],
 };
 
 class BackgroundMusicManager {
@@ -61,6 +63,7 @@ class BackgroundMusicManager {
     this.started = false;
     this.failed = false;
     this.boundStart = this.start.bind(this);
+    this.isArmed = false;
   }
   ensureAudio() {
     if (this.audio || this.failed) return this.audio;
@@ -80,9 +83,19 @@ class BackgroundMusicManager {
     return this.audio;
   }
   armAutoStart() {
-    const options = { once: true, passive: true };
-    document.addEventListener('pointerdown', this.boundStart, options);
-    document.addEventListener('keydown', this.boundStart, options);
+    if (this.isArmed || this.started || this.failed) return;
+    this.isArmed = true;
+    const options = { passive: true };
+    window.addEventListener('pointerdown', this.boundStart, options);
+    window.addEventListener('touchstart', this.boundStart, options);
+    window.addEventListener('keydown', this.boundStart);
+  }
+  disarmAutoStart() {
+    if (!this.isArmed) return;
+    this.isArmed = false;
+    window.removeEventListener('pointerdown', this.boundStart);
+    window.removeEventListener('touchstart', this.boundStart);
+    window.removeEventListener('keydown', this.boundStart);
   }
   async start() {
     if (this.started || this.failed) return;
@@ -92,6 +105,7 @@ class BackgroundMusicManager {
       audio.volume = this.config.volume;
       await audio.play();
       this.started = true;
+      this.disarmAutoStart();
     } catch {
       // Browser autoplay or missing-file issue: keep the game running silently.
     }
@@ -99,6 +113,9 @@ class BackgroundMusicManager {
   sync() {
     if (this.failed) return;
     const audio = this.ensureAudio();
+    if (!this.started) {
+      this.armAutoStart();
+    }
     if (!audio || !this.started) return;
     if (audio.paused) {
       audio.play().catch(() => {});
@@ -196,58 +213,128 @@ function sortLeaderboard() {
 }
 
 class SpriteSheetAnimator {
-  constructor(host, opts) {
+  constructor(host, opts = {}) {
     this.host = host;
-    this.sprite = host.querySelector('.sprite');
+    this.canvas = host.querySelector('.sprite-canvas');
     this.fallback = host.querySelector('.sprite-fallback');
-    this.rows = 4;
-    this.cols = 4;
+    this.rows = opts.rows || 4;
+    this.cols = opts.cols || 4;
     this.current = null;
     this.frame = 0;
     this.timer = null;
     this.ended = null;
-    this.setTint(opts.tint);
-    this.setFlip(opts.flip ?? 1);
+    this.image = null;
+    this.imageCache = new Map();
+    this.tint = opts.tint || '#22c55e';
+    this.flip = opts.flip ?? 1;
+    this.frameWidth = 0;
+    this.frameHeight = 0;
+    this.ctx = this.canvas?.getContext('2d', { willReadFrequently: true });
+    this.buffer = document.createElement('canvas');
+    this.bufferCtx = this.buffer.getContext('2d', { willReadFrequently: true });
+    this.setTint(this.tint);
+    this.setFlip(this.flip);
   }
-  setTint(tint) { this.host.style.setProperty('--tint', tint); }
-  setFlip(flip) { this.host.style.setProperty('--flip', String(flip)); }
+  setTint(tint) {
+    this.tint = tint;
+    this.host.style.setProperty('--tint', tint);
+    if (this.current && this.image) this.drawFrame();
+  }
+  setFlip(flip) {
+    this.flip = flip;
+    this.host.style.setProperty('--flip', String(flip));
+    if (this.current && this.image) this.drawFrame();
+  }
   play(stateName, onEnd) {
-    const src = SPRITES[stateName];
-    const config = ANIMATION_CONFIG[stateName] || ANIMATION_CONFIG.idle;
-    this.current = { stateName, src, config };
+    return this.playSheet({
+      stateName,
+      src: SPRITES[stateName],
+      rows: this.rows,
+      cols: this.cols,
+      ...ANIMATION_CONFIG[stateName],
+    }, onEnd);
+  }
+  playSheet(sheet, onEnd) {
+    this.current = {
+      stateName: sheet.stateName || 'custom',
+      src: sheet.src,
+      config: {
+        loop: Boolean(sheet.loop),
+        frameDuration: sheet.frameDuration || ANIMATION_CONFIG.idle.frameDuration,
+        freezeLastFrame: Boolean(sheet.freezeLastFrame),
+      },
+    };
+    this.rows = sheet.rows || 4;
+    this.cols = sheet.cols || 4;
     this.frame = 0;
     this.ended = onEnd || null;
     clearTimeout(this.timer);
-    this.sprite.style.backgroundImage = `url(${src})`;
-    this.sprite.style.backgroundSize = `${this.cols * 100}% ${this.rows * 100}%`;
-    this.sprite.style.setProperty('--sprite-image', `url(${src})`);
-    this.sprite.style.setProperty('--sprite-size', `${this.cols * 100}% ${this.rows * 100}%`);
-    this.host.dataset.state = stateName;
+    this.host.dataset.state = this.current.stateName;
     this.preloadAndStart();
   }
   preloadAndStart() {
-    const img = new Image();
-    img.onload = () => {
-      this.fallback.hidden = true;
-      this.sprite.hidden = false;
-      this.applyFrame();
-      this.tick();
-    };
+    const cached = this.imageCache.get(this.current.src);
+    if (cached?.complete) {
+      this.handleImageLoad(cached);
+      return;
+    }
+    const img = cached || new Image();
+    img.onload = () => this.handleImageLoad(img);
     img.onerror = () => {
-      this.sprite.hidden = true;
+      this.imageCache.delete(this.current.src);
+      this.image = null;
+      if (this.canvas) this.canvas.hidden = true;
       this.fallback.hidden = false;
       this.fallback.textContent = `Missing sprite sheet:\n${this.current.src}`;
-      if (this.current.config.loop) return;
-      if (this.ended) this.ended();
+      if (!this.current.config.loop && this.ended) this.ended();
     };
-    img.src = this.current.src;
+    this.imageCache.set(this.current.src, img);
+    if (!img.src) img.src = this.current.src;
   }
-  applyFrame() {
+  handleImageLoad(img) {
+    this.image = img;
+    this.frameWidth = Math.max(1, Math.floor(img.naturalWidth / this.cols));
+    this.frameHeight = Math.max(1, Math.floor(img.naturalHeight / this.rows));
+    this.resizeCanvases();
+    this.fallback.hidden = true;
+    if (this.canvas) this.canvas.hidden = false;
+    this.drawFrame();
+    this.tick();
+  }
+  resizeCanvases() {
+    for (const canvas of [this.canvas, this.buffer]) {
+      if (!canvas) continue;
+      canvas.width = this.frameWidth;
+      canvas.height = this.frameHeight;
+    }
+  }
+  drawFrame() {
+    if (!this.ctx || !this.bufferCtx || !this.image) return;
     const col = this.frame % this.cols;
     const row = Math.floor(this.frame / this.cols);
-    const position = `${(col / (this.cols - 1)) * 100}% ${(row / (this.rows - 1)) * 100}%`;
-    this.sprite.style.backgroundPosition = position;
-    this.sprite.style.setProperty('--sprite-position', position);
+    const sx = col * this.frameWidth;
+    const sy = row * this.frameHeight;
+    this.bufferCtx.clearRect(0, 0, this.frameWidth, this.frameHeight);
+    this.bufferCtx.drawImage(this.image, sx, sy, this.frameWidth, this.frameHeight, 0, 0, this.frameWidth, this.frameHeight);
+    const frame = this.bufferCtx.getImageData(0, 0, this.frameWidth, this.frameHeight);
+    const { data } = frame;
+    const tint = hexToRgb(this.tint);
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3];
+      if (alpha === 0) continue;
+      data[i] = Math.round((data[i] * 0.55) + (tint.r * 0.45));
+      data[i + 1] = Math.round((data[i + 1] * 0.55) + (tint.g * 0.45));
+      data[i + 2] = Math.round((data[i + 2] * 0.55) + (tint.b * 0.45));
+    }
+    this.bufferCtx.putImageData(frame, 0, 0);
+    this.ctx.clearRect(0, 0, this.frameWidth, this.frameHeight);
+    this.ctx.save();
+    if (this.flip === -1) {
+      this.ctx.translate(this.frameWidth, 0);
+      this.ctx.scale(-1, 1);
+    }
+    this.ctx.drawImage(this.buffer, 0, 0);
+    this.ctx.restore();
   }
   tick() {
     const { config } = this.current;
@@ -256,21 +343,35 @@ class SpriteSheetAnimator {
       if (next >= this.rows * this.cols) {
         if (config.loop) {
           this.frame = 0;
-          this.applyFrame();
+          this.drawFrame();
           this.tick();
           return;
         }
         this.frame = config.freezeLastFrame ? this.rows * this.cols - 1 : 0;
-        this.applyFrame();
+        this.drawFrame();
         if (this.ended) this.ended();
         return;
       }
       this.frame = next;
-      this.applyFrame();
+      this.drawFrame();
       this.tick();
     }, config.frameDuration);
   }
   stop() { clearTimeout(this.timer); }
+}
+
+function hexToRgb(hex) {
+  const normalized = (hex || '').replace('#', '').trim();
+  const full = normalized.length === 3
+    ? normalized.split('').map((char) => char + char).join('')
+    : normalized.padEnd(6, '0').slice(0, 6);
+  const value = Number.parseInt(full, 16);
+  if (Number.isNaN(value)) return { r: 34, g: 197, b: 94 };
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  };
 }
 
 function makeMatchPayload(playerA = state.me) {
@@ -463,8 +564,15 @@ function finishMatch() {
   render();
 }
 
+function renderAnimatedPreview(tint, label = '') {
+  return `
+    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}" style="--tint:${tint}">
+      <canvas class="sprite-canvas" aria-hidden="true"></canvas>
+      <div class="sprite-fallback" hidden></div>
+    </div>`;
+}
+
 function renderHome() {
-  const imageStyle = `--tint:${state.me.tint};--image:url(${HOME_IMAGE});`;
   return `
     <section class="panel hero">
       <div class="hero-copy">
@@ -478,7 +586,7 @@ function renderHome() {
         </div>
       </div>
       <div class="goblin-preview">
-        <div class="goblin-frame" style="${imageStyle}"></div>
+        ${renderAnimatedPreview(state.me.tint, 'home')}
         <div class="nameplate">${state.me.name}</div>
         <div class="subtext">Tinta casuale fissata per questa sessione: <span style="color:${state.me.tint}">${state.me.tint}</span></div>
       </div>
@@ -495,7 +603,7 @@ function renderCreate() {
       </div>
       <p class="muted">Se l’avversario apre il link nello stesso browser/dispositivo, questa schermata rileva la join e avvia il match anche qui.</p>
       <div class="goblin-preview" style="margin-top:18px;">
-        <div class="goblin-frame" style="--tint:${state.me.tint};--image:url(${HOME_IMAGE});"></div>
+        ${renderAnimatedPreview(state.me.tint, 'create')}
         <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
       </div>
     </section>`;
@@ -512,7 +620,7 @@ function renderJoin() {
         </div>
       </div>
       <div class="goblin-preview">
-        <div class="goblin-frame" style="--tint:${playerB.tint};--image:url(${HOME_IMAGE});"></div>
+        ${renderAnimatedPreview(playerB.tint, 'join')}
         <div class="nameplate">${playerB.name}</div>
         <div class="subtext">Preparati: il match parte da solo fra un attimo.</div>
       </div>
@@ -544,8 +652,7 @@ function renderMatchOrPost() {
               <div class="fighter-slot">
                 <div class="fighter-transform-positioner">
                   <div class="sprite-render" data-animator="${index}" style="--tint:${fighter.tint};--flip:${fighter.side === 'left' ? -1 : 1}">
-                    <div class="sprite"></div>
-                    <div class="sprite-tint" aria-hidden="true"></div>
+                    <canvas class="sprite-canvas" aria-hidden="true"></canvas>
                     <div class="sprite-fallback" hidden></div>
                   </div>
                   <div class="sprite-effects" aria-hidden="true"></div>
@@ -582,6 +689,8 @@ function renderLeaderboard() {
     </section>`;
 }
 function render() {
+  state.previewAnimators.forEach((animator) => animator.stop());
+  state.previewAnimators = [];
   const app = document.getElementById('app');
   app.innerHTML = `
     <main class="app-shell">
@@ -610,6 +719,12 @@ function render() {
   });
   document.getElementById('post-home')?.addEventListener('click', resetToHome);
   document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
+
+  document.querySelectorAll('[data-home-animator]').forEach((node) => {
+    const animator = new SpriteSheetAnimator(node, { tint: node.style.getPropertyValue('--tint') || state.me.tint });
+    state.previewAnimators.push(animator);
+    animator.playSheet(HOME_ANIMATION);
+  });
 
   if (state.screen === 'match' || state.screen === 'postmatch') {
     const nodes = [...document.querySelectorAll('[data-animator]')];
@@ -641,6 +756,7 @@ channel?.addEventListener('message', (event) => {
   }
 });
 
+bgmManager.ensureAudio();
 bgmManager.armAutoStart();
 
 const joinPayload = parseJoinPayload();
