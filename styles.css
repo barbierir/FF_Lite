@@ -11,6 +11,11 @@
 }
 
 * { box-sizing: border-box; }
+
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -306,7 +311,6 @@ a { color: #fde68a; }
 }
 .sprite-fallback {
   z-index: 3;
-  display: grid;
   place-items: center;
   font-size: 0.95rem;
   color: rgba(255,255,255,0.7);
@@ -317,6 +321,14 @@ a { color: #fde68a; }
     repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 25%),
     repeating-linear-gradient(180deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 25%),
     linear-gradient(135deg, rgba(77,124,15,0.5), rgba(22,101,52,0.6));
+}
+
+.sprite-fallback[hidden] {
+  display: none !important;
+}
+
+.sprite-fallback:not([hidden]) {
+  display: grid;
 }
 .battle-log-wrap {
   display: grid;
