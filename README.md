@@ -24,6 +24,7 @@ Lite matchmaking now uses a **Supabase table as the shared source of truth** for
 - invite-link join
 - waiting → active transition
 - final shared match result snapshot
+- daily leaderboard stats keyed by UTC calendar day
 
 ### 1. Create the table in Supabase
 
@@ -53,6 +54,35 @@ create policy "lite matches are insertable"
 
 create policy "lite matches are updatable"
   on public.ff_lite_matches
+  for update
+  using (true)
+  with check (true);
+
+create table if not exists public.ff_lite_daily_stats (
+  day_bucket date not null,
+  player_id text not null,
+  display_name text not null,
+  wins integer not null default 0,
+  losses integer not null default 0,
+  draws integer not null default 0,
+  matches_played integer not null default 0,
+  primary key (day_bucket, player_id)
+);
+
+alter table public.ff_lite_daily_stats enable row level security;
+
+create policy "lite daily stats are readable"
+  on public.ff_lite_daily_stats
+  for select
+  using (true);
+
+create policy "lite daily stats are insertable"
+  on public.ff_lite_daily_stats
+  for insert
+  with check (true);
+
+create policy "lite daily stats are updatable"
+  on public.ff_lite_daily_stats
   for update
   using (true)
   with check (true);
