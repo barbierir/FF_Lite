@@ -755,8 +755,10 @@ function setPendingMatchState(nextPendingMatch) {
     const pendingMatch = state.pendingMatch;
     if (!sharedMatch || !pendingMatch || pendingMatch.payload?.id !== matchId || sharedMatch.id !== matchId) return;
     if (state.match && (state.screen === 'match' || state.screen === 'postmatch')) {
-      hydrateMatchFromSharedState(sharedMatch);
-      updateMatchUI();
+      if (isSharedStateNewerThanLocal(sharedMatch)) {
+        hydrateMatchFromSharedState(sharedMatch);
+        updateMatchUI();
+      }
       return;
     }
     if (sharedMatch.status === 'active' && sharedMatch.playerB) {
@@ -1245,16 +1247,53 @@ function renderCreate() {
       </div>
     </section>`;
 }
+function getSharedMatchProgress(sharedMatch) {
+  const sharedState = sharedMatch?.sharedState || {};
+  const sharedTurn = Number(sharedState.turn || 0);
+  const sharedFighters = Array.isArray(sharedState.fighters) ? sharedState.fighters : [];
+  const sharedHpBySlot = new Map();
+  sharedFighters.forEach((fighter) => {
+    if (!fighter?.slot) return;
+    const hp = Number(fighter.hp);
+    if (Number.isFinite(hp)) sharedHpBySlot.set(fighter.slot, hp);
+  });
+  return {
+    sharedState,
+    sharedTurn: Number.isFinite(sharedTurn) ? sharedTurn : 0,
+    sharedHpBySlot,
+    winner: sharedState.winner || null,
+    finished: sharedMatch?.status === 'finished' || Boolean(sharedState.winner) || Boolean(sharedState.finishedAt),
+  };
+}
+function isSharedStateNewerThanLocal(sharedMatch) {
+  if (!state.match || !sharedMatch?.sharedState) return false;
+  const localTurn = Number(state.match.turn || 0);
+  const progress = getSharedMatchProgress(sharedMatch);
+  if (progress.sharedTurn > localTurn) return true;
+  if (progress.finished && !state.match.finished) return true;
+  if (progress.winner && !state.match.winner) return true;
+  return state.match.fighters.some((fighter) => {
+    const sharedHp = progress.sharedHpBySlot.get(fighter.slot);
+    return Number.isFinite(sharedHp) && sharedHp < fighter.hp;
+  });
+}
 function hydrateMatchFromSharedState(sharedMatch) {
   if (!state.match || !sharedMatch?.sharedState) return;
-  state.match.turn = Number(sharedMatch.sharedState.turn || 0);
-  state.match.sharedState = sharedMatch.sharedState;
-  const sharedFighters = Array.isArray(sharedMatch.sharedState.fighters) ? sharedMatch.sharedState.fighters : [];
+  const progress = getSharedMatchProgress(sharedMatch);
+  const localTurn = Number(state.match.turn || 0);
+  state.match.turn = Math.max(localTurn, progress.sharedTurn);
+  state.match.sharedState = {
+    ...state.match.sharedState,
+    ...progress.sharedState,
+    turn: state.match.turn,
+  };
   state.match.fighters = state.match.fighters.map((fighter) => {
-    const shared = sharedFighters.find((entry) => entry.slot === fighter.slot);
-    return shared ? { ...fighter, hp: Number(shared.hp ?? fighter.hp) } : fighter;
+    const sharedHp = progress.sharedHpBySlot.get(fighter.slot);
+    if (!Number.isFinite(sharedHp)) return fighter;
+    return { ...fighter, hp: Math.min(fighter.hp, sharedHp) };
   });
-  state.match.winner = sharedMatch.sharedState.winner || state.match.winner;
+  if (progress.winner) state.match.winner = progress.winner;
+  if (progress.finished) state.match.finished = true;
 }
 
 function renderJoin() {
