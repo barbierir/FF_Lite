@@ -1756,7 +1756,7 @@ function renderHome() {
       </div>
       <p class="muted">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
       <div class="link-box">
-        <code>${state.pendingMatch.link}</code>
+        <code title="${state.pendingMatch.link}" aria-label="Generated match link">${state.pendingMatch.link}</code>
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -1773,7 +1773,7 @@ function renderHome() {
       </div>
       <p class="muted">Crea il match senza lasciare la home, poi manda il link al player B.</p>
       <div class="link-box">
-        <code>${state.pendingMatch.link}</code>
+        <code title="${state.pendingMatch.link}" aria-label="Generated match link">${state.pendingMatch.link}</code>
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -1880,7 +1880,7 @@ function renderCreate() {
       <h1 class="screen-title">Crea match</h1>
       <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
       <div class="link-box">
-        <code>${state.pendingMatch.link}</code>
+        <code title="${state.pendingMatch.link}" aria-label="Generated match link">${state.pendingMatch.link}</code>
         <button id="copy-link" class="btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
