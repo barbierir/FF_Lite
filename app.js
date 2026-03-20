@@ -1675,8 +1675,8 @@ function renderHome() {
             <span class="badge badge-live">Live arena</span>
             <span class="badge">2-player chaos</span>
           </div>
-          <h1>Weird creatures. Fast fights. One filthy arena.</h1>
-          <p class="hero-lead">Jump into a strange neon pit where goblins trade reckless hits, lucky backfires, and bragging rights in under a minute.</p>
+          <h1>Weird little gremlins. Fast fights. Big arcade chaos.</h1>
+          <p class="hero-lead">Jump into a goofy creature brawl where goblins trade reckless hits, lucky backfires, and bragging rights in under a minute.</p>
           <div class="hero-meta">
             <div class="meta-pill"><strong>Avg match</strong><span>45–60 sec</span></div>
             <div class="meta-pill"><strong>Mode</strong><span>Share link multiplayer</span></div>
@@ -1721,7 +1721,7 @@ function renderHome() {
         <section class="panel world-card leaderboard-preview">
           <div class="section-heading compact">
             <span class="section-kicker">Leaderboard preview</span>
-            <h2 class="section-title">Top stinkers</h2>
+            <h2 class="section-title">Top troublemakers</h2>
           </div>
           <div class="preview-list">
             ${leaderboardPreview.length ? leaderboardPreview.map((row, index) => `
@@ -1942,7 +1942,7 @@ function renderLeaderboard() {
     <section class="panel leaderboard-layout world-card">
       <div class="leaderboard-header">
         <div class="section-heading">
-          <span class="section-kicker">Hall of weirdos</span>
+          <span class="section-kicker">Hall of troublemakers</span>
           <h1 class="screen-title">Leaderboard</h1>
           <p class="muted">Progressi giornalieri separati dalla classifica Elo globale.</p>
         </div>
@@ -1990,8 +1990,8 @@ function render() {
         <div class="global-header__content">
           <div>
             <p class="global-header__eyebrow">Fart & Furious Lite</p>
-            <h1 class="global-header__title">Live goblin duels with neon stink, shareable lobbies, and fast rematches.</h1>
-            <p class="muted global-header__subtitle">A premium-feeling game shell that stays compact while the action stays front and center.</p>
+            <h1 class="global-header__title">Live goblin duels with goofy chaos, shareable lobbies, and fast rematches.</h1>
+            <p class="muted global-header__subtitle">A bright party-battle shell that keeps the action readable while the world feels playful and weird.</p>
           </div>
           <div class="header-status">
             <span class="status-chip">Fast matches</span>
