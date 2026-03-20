@@ -26,7 +26,7 @@ const ACTION_VARIANT_COUNTS = {
 const HOME_IMAGE = 'assets/goblin/idle_choose.png';
 const HOME_ANIMATION = { src: HOME_IMAGE, rows: 4, cols: 4, loop: true, frameDuration: 150 };
 const ARENA_BACKGROUND = '/images/match_bg.png'; // Placeholder image path: replace/add the real arena background manually later.
-const GLOBAL_HEADER_BACKGROUND = '/images/header.jpg';
+const HOME_WORLD_BACKGROUND = '/images/header.jpg';
 const AUDIO_CONFIG = {
   bgm: {
     src: '/audio/bgm.mp3', // Placeholder audio path: replace/add the real looping BGM manually later.
@@ -1663,8 +1663,9 @@ function renderHome() {
 
   return `
     <section class="home-layout">
-      <section class="panel hero hero-redesign world-card">
+      <section class="panel hero hero-redesign world-card main-showcase" style="--home-world-image:url('${HOME_WORLD_BACKGROUND}')">
         <div class="hero-atmosphere" aria-hidden="true">
+          <span class="world-wash"></span>
           <span class="mist mist-a"></span>
           <span class="mist mist-b"></span>
           <span class="spark spark-a"></span>
@@ -1674,12 +1675,14 @@ function renderHome() {
           <div class="hero-badges">
             <span class="badge badge-live">Live arena</span>
             <span class="badge">2-player chaos</span>
+            <span class="badge">Storybook arcade</span>
           </div>
-          <h1>Weird little gremlins. Fast fights. Big arcade chaos.</h1>
-          <p class="hero-lead">Jump into a goofy creature brawl where goblins trade reckless hits, lucky backfires, and bragging rights in under a minute.</p>
+          <h1>Fast goblin duels in a bright little cartoon world.</h1>
+          <p class="hero-lead">The big intro banner is gone, so the main arena hub now carries the mood: playful creature battles, cheerful village energy, and readable chaos in under a minute.</p>
           <div class="hero-meta">
             <div class="meta-pill"><strong>Avg match</strong><span>45–60 sec</span></div>
             <div class="meta-pill"><strong>Mode</strong><span>Share link multiplayer</span></div>
+            <div class="meta-pill"><strong>Mood</strong><span>Green cartoon mischief</span></div>
           </div>
           ${challengePanel}
         </div>
@@ -1985,20 +1988,6 @@ function render() {
           </label>
         </div>
       </nav>
-      <header class="global-header panel world-card" role="banner" style="--header-image:url('${GLOBAL_HEADER_BACKGROUND}')">
-        <div class="global-header__overlay"></div>
-        <div class="global-header__content">
-          <div>
-            <p class="global-header__eyebrow">Fart & Furious Lite</p>
-            <h1 class="global-header__title">Live goblin duels with goofy chaos, shareable lobbies, and fast rematches.</h1>
-            <p class="muted global-header__subtitle">A bright party-battle shell that keeps the action readable while the world feels playful and weird.</p>
-          </div>
-          <div class="header-status">
-            <span class="status-chip">Fast matches</span>
-            <span class="status-chip">Live multiplayer</span>
-          </div>
-        </div>
-      </header>
       ${state.loading ? renderStatusCard('Connessione al match condiviso', 'Sto sincronizzando il match Lite con il backend condiviso…') : ''}
       ${state.screen === 'boot' ? renderStatusCard('Apro il match condiviso', 'Sto risolvendo il link condiviso prima di mostrare la lobby o il match…', { showHomeButton: false }) : ''}
       ${state.screen === 'home' ? renderHome() : ''}
