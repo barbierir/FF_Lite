@@ -401,7 +401,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   gap: 20px;
 }
 .hero-redesign {
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.92fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.95fr);
   align-items: stretch;
   padding: clamp(20px, 3vw, 30px);
 }
@@ -566,6 +566,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   gap: 14px;
   align-items: stretch;
   justify-items: stretch;
+  width: 100%;
+  max-width: 680px;
+  margin-right: auto;
   min-width: 0;
 }
 .challenge-card > * {
@@ -716,7 +719,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   display: flex;
   align-items: stretch;
   gap: 12px;
-  padding: 14px;
+  width: 100%;
+  max-width: 100%;
+  padding: 12px;
   min-width: 0;
   background: linear-gradient(180deg, rgba(255,255,250,0.98), rgba(236, 247, 223, 0.95));
   border-radius: 20px;
@@ -727,7 +732,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .share-link-input {
   appearance: none;
   -webkit-appearance: none;
-  flex: 1 1 0;
+  flex: 1 1 260px;
   min-width: 0;
   min-height: 56px;
   height: 56px;
@@ -753,9 +758,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   cursor: text;
 }
 .share-link-copy {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   align-self: stretch;
-  min-width: 132px;
+  min-width: 120px;
   min-height: 56px;
   padding-inline: 1.15rem;
 }
