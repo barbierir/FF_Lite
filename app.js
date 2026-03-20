@@ -15,6 +15,7 @@ const SPRITES = {
 const HOME_IMAGE = 'assets/goblin/idle_choose.png';
 const HOME_ANIMATION = { src: HOME_IMAGE, rows: 4, cols: 4, loop: true, frameDuration: 150 };
 const ARENA_BACKGROUND = '/images/match_bg.png'; // Placeholder image path: replace/add the real arena background manually later.
+const GLOBAL_HEADER_BACKGROUND = '/images/match_bg.png';
 const AUDIO_CONFIG = {
   bgm: {
     src: '/audio/bgm.mp3', // Placeholder audio path: replace/add the real looping BGM manually later.
@@ -97,6 +98,7 @@ const state = {
   activeMatchSubscription: null,
   homeView: 'default',
   loading: false,
+  booting: false,
   errorMessage: '',
 };
 
@@ -993,6 +995,7 @@ function parseJoinMatchId() {
   return params.get('matchId');
 }
 function resetToHome() {
+  state.booting = false;
   window.history.replaceState({}, '', window.location.pathname);
   clearRuntimeMatchState({ clearWatcher: true });
   state.pendingMatch = null;
@@ -1005,6 +1008,7 @@ function resetToHome() {
 }
 async function startCreateFlow() {
   clearRuntimeMatchState();
+  state.booting = false;
   state.loading = true;
   state.errorMessage = '';
   state.screen = 'home';
@@ -1028,7 +1032,9 @@ async function startCreateFlow() {
   }
 }
 async function startJoinedFlow(matchId) {
-  state.loading = true;
+  state.booting = true;
+  state.screen = 'boot';
+  state.loading = false;
   state.errorMessage = '';
   render();
   try {
@@ -1048,6 +1054,7 @@ async function startJoinedFlow(matchId) {
     });
     state.screen = 'join';
     state.loading = false;
+    state.booting = false;
     audioManager.syncHomePlayback();
     render();
     queueMatchStart(sharedMatch);
@@ -1447,12 +1454,12 @@ function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex
     </div>`;
 }
 
-function renderStatusCard(title, body) {
+function renderStatusCard(title, body, { showHomeButton = true } = {}) {
   return `
     <section class="panel">
       <h1 class="screen-title">${title}</h1>
       <p class="muted">${body}</p>
-      <div class="footer-actions"><button id="status-home">Home</button></div>
+      ${showHomeButton ? '<div class="footer-actions"><button id="status-home">Home</button></div>' : ''}
     </section>`;
 }
 
@@ -1707,7 +1714,7 @@ function render() {
     <main class="app-shell">
       <nav class="topbar">
         <button id="nav-home">Home</button>
-        ${state.screen === 'home' ? '' : '<button class="secondary" id="nav-create">Crea match</button>'}
+        ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="secondary" id="nav-create">Crea nuovo match</button>'}
         <button class="ghost" id="nav-leaderboard">Leaderboard</button>
         <div class="audio-controls" aria-label="Audio controls">
           <button class="ghost audio-toggle" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
@@ -1717,7 +1724,18 @@ function render() {
           </label>
         </div>
       </nav>
+      <header class="global-header panel" role="banner" style="--header-image:url('${GLOBAL_HEADER_BACKGROUND}')">
+        <div class="global-header__overlay"></div>
+        <div class="global-header__content">
+          <p class="global-header__eyebrow">Fart & Furious Lite</p>
+          <div>
+            <h1 class="global-header__title">Arena condivisa, lobby live, leaderboard globale.</h1>
+            <p class="muted global-header__subtitle">Header compatto persistente su tutte le schermate senza spingere in basso il gameplay.</p>
+          </div>
+        </div>
+      </header>
       ${state.loading ? renderStatusCard('Connessione al match condiviso', 'Sto sincronizzando il match Lite con il backend condiviso…') : ''}
+      ${state.screen === 'boot' ? renderStatusCard('Apro il match condiviso', 'Sto risolvendo il link condiviso prima di mostrare la lobby o il match…', { showHomeButton: false }) : ''}
       ${state.screen === 'home' ? renderHome() : ''}
       ${state.screen === 'create' ? renderCreate() : ''}
       ${state.screen === 'join' ? renderJoin() : ''}
@@ -1787,6 +1805,9 @@ audioManager.initializeForHome();
 
 const joinMatchId = parseJoinMatchId();
 if (joinMatchId) {
+  state.screen = 'boot';
+  state.booting = true;
+  render();
   startJoinedFlow(joinMatchId);
 } else {
   render();
