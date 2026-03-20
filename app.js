@@ -69,6 +69,15 @@ const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
 const MAX_BATTLE_LOG_ENTRIES = 24;
 const LEADERBOARD_DAY_TIMEZONE = 'UTC';
+const LOG_EVENT_META = {
+  attack: { icon: '✦', label: 'Attack', className: 'log-event-attack' },
+  hit: { icon: '✷', label: 'Hit', className: 'log-event-hit' },
+  backfire: { icon: '⟲', label: 'Backfire', className: 'log-event-backfire' },
+  charge: { icon: '⚡', label: 'Charge', className: 'log-event-charge' },
+  victory: { icon: '♕', label: 'Victory', className: 'log-event-victory' },
+  defeat: { icon: '◔', label: 'Defeat', className: 'log-event-defeat' },
+  neutral: { icon: '•', label: 'Info', className: 'log-event-neutral' },
+};
 const INITIAL_RATING = 1000;
 const ELO_K_FACTOR = 24;
 const PALETTE_VARIANTS = [
@@ -1530,6 +1539,20 @@ function wrapLogMatches(text, matcher, className) {
   if (!text) return text;
   return text.replace(matcher, (match) => `<span class="${className}">${match}</span>`);
 }
+function classifyBattleLogEvent(line) {
+  const text = String(line || '').toLowerCase();
+  if (!text) return 'neutral';
+  if (/trionfa|wins!|win!|victory|trofeo/.test(text)) return 'victory';
+  if (/crolla|defeat|sconfit|abbattut|cade/.test(text)) return 'defeat';
+  if (/autosabota|boomerang|backfire/.test(text)) return 'backfire';
+  if (/carica|prepara|recharge|energia/.test(text)) return 'charge';
+  if (/colpisce|danni aromatici|hit/.test(text)) return 'hit';
+  if (/assalta|attacca|all'attacco|attack/.test(text)) return 'attack';
+  return 'neutral';
+}
+function getLogEventMeta(type) {
+  return LOG_EVENT_META[type] || LOG_EVENT_META.neutral;
+}
 function formatLogLine(line) {
   const fighters = state.match?.fighters ?? [];
   let html = escapeHtml(line);
@@ -1541,16 +1564,21 @@ function formatLogLine(line) {
       const safeName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       html = wrapLogMatches(html, new RegExp(safeName, 'g'), 'log-name');
     });
-  html = wrapLogMatches(html, /\b(colpisce|autosabota|trionfa|crolla|carica|pareggio)\b/gi, 'log-action');
+  html = wrapLogMatches(html, /\b(colpisce|autosabota|trionfa|crolla|carica|pareggio|prepara|scaglia|resiste|copiato|necessaria)\b/gi, 'log-action');
   html = wrapLogMatches(html, /\b\d+\b(?= danni? aromatici|!)/gi, 'log-result');
-  html = wrapLogMatches(html, /\b(danni aromatici|boomerang|nebbia verdognola|tossico)\b/gi, 'log-result');
+  html = wrapLogMatches(html, /\b(danni aromatici|boomerang|nebbia verdognola|tossico|appunti)\b/gi, 'log-result');
   return html;
 }
 function renderBattleLogEntries() {
   if (!state.logs.length) {
-    return '<p class="log-empty"><span class="log-empty-kicker">Battle starting…</span><span class="log-empty-copy">The goblins are eyeing each other and sizing up the stinkiest opener.</span></p>';
+    const neutralMeta = getLogEventMeta('neutral');
+    return `<p class="log-empty ${neutralMeta.className}"><span class="log-icon" aria-hidden="true">${neutralMeta.icon}</span><span class="log-empty-body"><span class="log-empty-kicker">Battle starting…</span><span class="log-empty-copy">The goblins are eyeing each other and sizing up the stinkiest opener.</span></span></p>`;
   }
-  return state.logs.map((line, index) => `<p class="log-line" data-log-row="${index % 2}"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${formatLogLine(line)}</span></p>`).join('');
+  return state.logs.map((line, index) => {
+    const eventType = classifyBattleLogEvent(line);
+    const meta = getLogEventMeta(eventType);
+    return `<p class="log-line ${meta.className}" data-log-row="${index % 2}" data-log-type="${eventType}"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-icon" aria-hidden="true">${meta.icon}</span><span class="log-copy"><span class="sr-only">${meta.label}: </span>${formatLogLine(line)}</span></p>`;
+  }).join('');
 }
 function updateMatchUI() {
   if (!(state.screen === 'match' || state.screen === 'postmatch') || !state.match) return;
@@ -1900,6 +1928,8 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
       sound: 'charge',
       soundDelay: MATCH_SOUND_OFFSETS.charge,
       duration: MATCH_ACTION_TIMINGS.recharge,
+      log: `${attacker.name} carica una zaffata sospetta.`,
+      logDelay: 120,
     }],
   }];
   if (action.type === 'backfire') {
