@@ -111,6 +111,7 @@ const state = {
   loading: false,
   booting: false,
   errorMessage: '',
+  copyFeedback: '',
 };
 
 function normalizeAnimationAction(action) {
@@ -1257,8 +1258,11 @@ function updateMatchUI() {
   state.match.fighters.forEach((fighter, index) => {
     const fill = document.querySelector(`[data-hp="${index}"]`);
     const label = document.querySelector(`[data-hp-label="${index}"]`);
+    const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
+    const stateLabel = fighterNode?.querySelector('.fighter-state');
     if (fill) fill.style.setProperty('--hp', `${fighter.hp}%`);
     if (label) label.textContent = `HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}`;
+    if (stateLabel) stateLabel.textContent = fighter.state || 'idle';
   });
   const turnLabel = document.querySelector('[data-turn-counter]');
   if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
@@ -1381,6 +1385,39 @@ async function syncSharedMatchResult() {
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
+function triggerTemporaryClass(target, className, duration = 260) {
+  if (!target) return;
+  target.classList.remove(className);
+  void target.offsetWidth;
+  target.classList.add(className);
+  window.setTimeout(() => target.classList.remove(className), duration);
+}
+function triggerFighterEffect(index, className, duration = 260) {
+  const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
+  if (!fighterNode) return;
+  triggerTemporaryClass(fighterNode, className, duration);
+}
+function attachButtonJuice(root = document) {
+  root.querySelectorAll('button').forEach((button) => {
+    const release = () => {
+      button.classList.remove('is-pressed');
+      triggerTemporaryClass(button, 'is-pop', 230);
+    };
+    button.addEventListener('pointerdown', () => {
+      button.classList.add('is-pressed');
+    });
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointerleave', () => button.classList.remove('is-pressed'));
+    button.addEventListener('pointercancel', () => button.classList.remove('is-pressed'));
+    button.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') button.classList.add('is-pressed');
+    });
+    button.addEventListener('keyup', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') release();
+    });
+    button.addEventListener('blur', () => button.classList.remove('is-pressed'));
+  });
+}
 function setFighterState(index, animation) {
   if (!state.match || index == null || !animation) return;
   const fighter = state.match.fighters[index];
@@ -1443,6 +1480,12 @@ async function runMatchActionGroup(actions, totalDuration) {
       } else {
         playFighterAnimation(action.sourceIndex, action.animation);
         if (action.targetAnimation) playFighterAnimation(action.targetIndex, action.targetAnimation);
+        if (Number.isInteger(action.sourceIndex) && ['attack', 'backfire', 'recharge', 'victory'].includes(action.animation)) {
+          triggerFighterEffect(action.sourceIndex, 'is-acting', 320);
+        }
+        if (Number.isInteger(action.targetIndex) && ['hit', 'defeat'].includes(action.targetAnimation || action.animation)) {
+          triggerFighterEffect(action.targetIndex, 'is-hit', 220);
+        }
       }
       updateMatchUI();
     }, startAt);
@@ -1452,6 +1495,7 @@ async function runMatchActionGroup(actions, totalDuration) {
     if (action.apply) {
       schedule(() => {
         action.apply();
+        if (Number.isInteger(action.targetIndex)) triggerFighterEffect(action.targetIndex, 'has-state-pop', 280);
         updateMatchUI();
       }, startAt + (action.applyDelay ?? 0));
     }
@@ -1631,9 +1675,10 @@ function renderHome() {
         <code>${state.pendingMatch.link}</code>
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
+      <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
       <p class="muted">${challengerStatus}</p>
       <div class="status-chip-row">
-        <span class="status-chip chip-bounce">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
+        <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
         <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
       </div>
     </div>` : state.pendingMatch ? `
@@ -1647,6 +1692,7 @@ function renderHome() {
         <code>${state.pendingMatch.link}</code>
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
+      <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
       <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
     </div>` : `
     <div class="hero-cta-block cta-alive card-lift">
@@ -1753,6 +1799,7 @@ function renderCreate() {
         <code>${state.pendingMatch.link}</code>
         <button id="copy-link" class="btn-bounce">Copia link</button>
       </div>
+      <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
       <p class="muted">Questa schermata controlla il match condiviso ogni pochi secondi. Quando il player B entra, il match parte automaticamente anche qui senza refresh.</p>
       <div class="goblin-preview" style="margin-top:18px;">
         ${renderAnimatedPreview('create', state.pendingMatch.payload.playerA.variantIndex)}
@@ -1853,7 +1900,7 @@ function renderMatchOrPost() {
           </div>
           <div class="match-status-cluster">
             <span class="status-chip chip-bounce" data-turn-counter>Turno ${state.match.turn}</span>
-            <span class="status-chip chip-bounce">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
+            <span class="status-chip chip-bounce" data-live="true">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
           </div>
         </div>
         ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
@@ -1863,7 +1910,7 @@ function renderMatchOrPost() {
           <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
           <div class="arena-floor" aria-hidden="true"></div>
           ${state.match.fighters.map((fighter, index) => `
-            <article class="fighter fighter-${fighter.side}">
+            <article class="fighter fighter-${fighter.side}" data-fighter="${index}">
               <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}">
                 <div class="fighter-label-row">
                   <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
@@ -1888,7 +1935,7 @@ function renderMatchOrPost() {
         <div class="log-panel world-card">
           <div class="log-head-row">
             <p class="log-heading">Battle log</p>
-            <span class="status-chip">Live feed</span>
+            <span class="status-chip" data-live="true">Live feed</span>
           </div>
           <div id="log-lines" class="list-stagger">
             ${state.logs.map((line, index) => `<p class="log-line"><span class="log-index">0${index + 1}</span>${line}</p>`).join('')}
@@ -1950,7 +1997,7 @@ function renderLeaderboard() {
           <p class="muted">Progressi giornalieri separati dalla classifica Elo globale.</p>
         </div>
         <div class="leaderboard-top-meta">
-          <div class="badge badge-live chip-bounce">UTC daily bucket</div>
+          <div class="badge badge-live chip-bounce" data-live="true">UTC daily bucket</div>
           <div class="badge chip-bounce">Live sync</div>
         </div>
       </div>
@@ -2016,12 +2063,25 @@ function render() {
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('nav-leaderboard')?.addEventListener('click', showLeaderboardScreen);
   document.getElementById('copy-link')?.addEventListener('click', async () => {
+    const copyButton = document.getElementById('copy-link');
     try {
       await navigator.clipboard.writeText(state.pendingMatch.link);
+      state.copyFeedback = 'Link copied!';
+      copyButton?.classList.add('copy-success');
+      triggerTemporaryClass(copyButton, 'is-pop', 230);
       logLine('Link copiato negli appunti.');
     } catch {
+      state.copyFeedback = 'Copy unavailable — use manual copy.';
       logLine('Copia manuale necessaria: il browser non permette gli appunti.');
     }
+    const feedbackNode = document.querySelector('.copy-feedback');
+    if (feedbackNode) feedbackNode.textContent = state.copyFeedback;
+    window.setTimeout(() => {
+      state.copyFeedback = '';
+      copyButton?.classList.remove('copy-success');
+      const nextFeedbackNode = document.querySelector('.copy-feedback');
+      if (nextFeedbackNode) nextFeedbackNode.textContent = '';
+    }, 1500);
   });
   document.getElementById('post-home')?.addEventListener('click', resetToHome);
   document.getElementById('post-leaderboard')?.addEventListener('click', showLeaderboardScreen);
@@ -2054,6 +2114,7 @@ function render() {
     restoreMatchAnimators({ force: true });
   }
 
+  attachButtonJuice(app);
   refreshAudioControlsUI();
 }
 
