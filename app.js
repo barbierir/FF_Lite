@@ -419,46 +419,111 @@ function sortLeaderboardRows(rows) {
   rows.sort((a, b) => b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.draws - a.draws || a.name.localeCompare(b.name));
   return rows;
 }
-async function loadLeaderboard() {
+async function loadLeaderboard({ silent = false } = {}) {
+  const dayBucket = getCurrentLeaderboardDayBucket();
+  console.info('[leaderboard] load start', {
+    playerId: state.me?.id || null,
+    dayBucket,
+    silent,
+  });
   state.leaderboardStatus = 'loading';
-  render();
+  if (!silent) render();
   if (!isBackendConfigured()) {
+    console.warn('[leaderboard] load skipped: backend not configured', {
+      playerId: state.me?.id || null,
+      dayBucket,
+    });
     state.leaderboard = [];
     state.leaderboardStatus = 'ready';
-    render();
-    return;
+    if (!silent) render();
+    return [];
   }
   try {
-    const dayBucket = getCurrentLeaderboardDayBucket();
     const rows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&select=player_id,display_name,wins,losses,draws,matches_played&order=wins.desc,draws.desc,losses.asc,display_name.asc`, { method: 'GET', prefer: undefined });
+    console.info('[leaderboard] load success', {
+      playerId: state.me?.id || null,
+      dayBucket,
+      rowCount: Array.isArray(rows) ? rows.length : 0,
+      rows,
+    });
     state.leaderboard = sortLeaderboardRows((rows || []).map(normalizeLeaderboardRow));
     state.leaderboardStatus = 'ready';
+    return state.leaderboard;
   } catch (error) {
-    console.error('Failed to load leaderboard', error);
+    console.error('[leaderboard] load failed', {
+      playerId: state.me?.id || null,
+      dayBucket,
+      error: error?.message || error,
+    });
     state.leaderboard = [];
     state.leaderboardStatus = 'error';
+    return [];
+  } finally {
+    render();
   }
-  render();
 }
 async function upsertDailyStat(player, increments) {
-  if (!player?.id || !isBackendConfigured()) return;
+  if (!player?.id || !isBackendConfigured()) {
+    console.warn('[leaderboard] upsert skipped', {
+      playerId: player?.id || null,
+      currentPlayerId: state.me?.id || null,
+      backendConfigured: isBackendConfigured(),
+    });
+    return null;
+  }
   const dayBucket = getCurrentLeaderboardDayBucket();
-  const existingRows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&player_id=eq.${encodeURIComponent(player.id)}&select=*`, { method: 'GET', prefer: undefined });
-  const current = existingRows?.[0];
-  const next = {
-    day_bucket: dayBucket,
-    player_id: player.id,
-    display_name: player.name,
-    wins: Number(current?.wins || 0) + (increments.wins || 0),
-    losses: Number(current?.losses || 0) + (increments.losses || 0),
-    draws: Number(current?.draws || 0) + (increments.draws || 0),
-    matches_played: Number(current?.matches_played || 0) + (increments.matchesPlayed || 0),
-  };
-  await supabaseRequest('ff_lite_daily_stats', {
-    method: 'POST',
-    body: next,
-    prefer: 'resolution=merge-duplicates,return=representation',
+  console.info('[leaderboard] upsert start', {
+    currentPlayerId: state.me?.id || null,
+    playerId: player.id,
+    dayBucket,
+    increments,
   });
+  try {
+    const existingRows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&player_id=eq.${encodeURIComponent(player.id)}&select=*`, { method: 'GET', prefer: undefined });
+    console.info('[leaderboard] upsert existing row', {
+      currentPlayerId: state.me?.id || null,
+      playerId: player.id,
+      dayBucket,
+      existingRow: existingRows?.[0] || null,
+    });
+    const current = existingRows?.[0];
+    const next = {
+      day_bucket: dayBucket,
+      player_id: player.id,
+      display_name: player.name,
+      wins: Number(current?.wins || 0) + (increments.wins || 0),
+      losses: Number(current?.losses || 0) + (increments.losses || 0),
+      draws: Number(current?.draws || 0) + (increments.draws || 0),
+      matches_played: Number(current?.matches_played || 0) + (increments.matchesPlayed || 0),
+    };
+    console.info('[leaderboard] upsert write', {
+      currentPlayerId: state.me?.id || null,
+      playerId: player.id,
+      dayBucket,
+      payload: next,
+    });
+    const response = await supabaseRequest('ff_lite_daily_stats?on_conflict=day_bucket,player_id', {
+      method: 'POST',
+      body: next,
+      prefer: 'resolution=merge-duplicates,return=representation',
+    });
+    console.info('[leaderboard] upsert success', {
+      currentPlayerId: state.me?.id || null,
+      playerId: player.id,
+      dayBucket,
+      response,
+    });
+    return response;
+  } catch (error) {
+    console.error('[leaderboard] upsert failed', {
+      currentPlayerId: state.me?.id || null,
+      playerId: player.id,
+      dayBucket,
+      increments,
+      error: error?.message || error,
+    });
+    throw error;
+  }
 }
 
 class SpriteSheetAnimator {
@@ -965,23 +1030,69 @@ function computeAction(attacker, defender, turn) {
   return { type: 'attack', amount: damage, text: `${attacker.name} colpisce ${defender.name} per ${damage} danni aromatici!` };
 }
 function isLeaderboardWriteOwner() {
-  return Boolean(state.match?.fighters?.[0]?.id && state.me?.id === state.match.fighters[0].id);
+  const playerA = state.match?.fighters?.find((fighter) => fighter.slot === 'A') || null;
+  const fighter0 = state.match?.fighters?.[0] || null;
+  const currentFighter = state.match?.fighters?.find((fighter) => fighter.id === state.me?.id) || null;
+  const isOwner = Boolean(currentFighter?.slot === 'A' && playerA?.id && currentFighter.id === playerA.id);
+  console.info('[leaderboard] write owner check', {
+    currentPlayerId: state.me?.id || null,
+    fighter0Id: fighter0?.id || null,
+    playerAId: playerA?.id || null,
+    currentSlot: currentFighter?.slot || null,
+    passed: isOwner,
+  });
+  return isOwner;
 }
 async function updateLeaderboardForResult(winner, loser, draw = false) {
-  if (!state.match || !isLeaderboardWriteOwner()) return;
-  const [playerA, playerB] = state.match.fighters;
-  if (draw) {
-    await Promise.all([
-      upsertDailyStat(playerA, { draws: 1, matchesPlayed: 1 }),
-      upsertDailyStat(playerB, { draws: 1, matchesPlayed: 1 }),
-    ]);
-  } else {
-    await Promise.all([
-      upsertDailyStat(winner, { wins: 1, matchesPlayed: 1 }),
-      upsertDailyStat(loser, { losses: 1, matchesPlayed: 1 }),
-    ]);
+  if (!state.match) return false;
+  const dayBucket = getCurrentLeaderboardDayBucket();
+  const playerA = state.match.fighters.find((fighter) => fighter.slot === 'A') || null;
+  const playerB = state.match.fighters.find((fighter) => fighter.slot === 'B') || null;
+  const writeOwner = isLeaderboardWriteOwner();
+  console.info('[leaderboard] update result start', {
+    currentPlayerId: state.me?.id || null,
+    fighter0Id: state.match.fighters?.[0]?.id || null,
+    playerAId: playerA?.id || null,
+    playerBId: playerB?.id || null,
+    writeOwner,
+    dayBucket,
+    draw,
+    winnerId: winner?.id || null,
+    loserId: loser?.id || null,
+  });
+  if (!writeOwner) return false;
+  try {
+    if (draw) {
+      await Promise.all([
+        upsertDailyStat(playerA, { draws: 1, matchesPlayed: 1 }),
+        upsertDailyStat(playerB, { draws: 1, matchesPlayed: 1 }),
+      ]);
+    } else {
+      await Promise.all([
+        upsertDailyStat(winner, { wins: 1, matchesPlayed: 1 }),
+        upsertDailyStat(loser, { losses: 1, matchesPlayed: 1 }),
+      ]);
+    }
+    await loadLeaderboard({ silent: state.screen !== 'leaderboard' });
+    return true;
+  } catch (error) {
+    state.leaderboard = [];
+    state.leaderboardStatus = 'error';
+    console.error('[leaderboard] update result failed', {
+      currentPlayerId: state.me?.id || null,
+      fighter0Id: state.match.fighters?.[0]?.id || null,
+      playerAId: playerA?.id || null,
+      playerBId: playerB?.id || null,
+      writeOwner,
+      dayBucket,
+      draw,
+      winnerId: winner?.id || null,
+      loserId: loser?.id || null,
+      error: error?.message || error,
+    });
+    render();
+    return false;
   }
-  if (state.screen === 'leaderboard') loadLeaderboard();
 }
 async function syncSharedMatchState(extraState = {}) {
   if (!state.match || !isBackendConfigured()) return;
@@ -1398,6 +1509,11 @@ function renderMatchOrPost() {
     </section>`;
 }
 function renderLeaderboard() {
+  const leaderboardMessage = state.leaderboardStatus === 'loading'
+    ? 'Caricamento classifica…'
+    : state.leaderboardStatus === 'error'
+      ? 'Errore nel caricamento della classifica giornaliera.'
+      : 'Nessun risultato ancora per oggi.';
   return `
     <section class="panel leaderboard-layout">
       <div>
@@ -1407,7 +1523,7 @@ function renderLeaderboard() {
       <table class="table">
         <thead><tr><th>Player</th><th>Wins</th><th>Losses</th><th>Draws</th><th>Matches</th><th>Win rate</th></tr></thead>
         <tbody>
-          ${state.leaderboard.length ? state.leaderboard.map((row) => `<tr><td>${row.name}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${row.matchesPlayed}</td><td>${row.winRate}%</td></tr>`).join('') : `<tr><td colspan="6">${state.leaderboardStatus === 'loading' ? 'Caricamento classifica…' : 'Nessun risultato ancora per oggi.'}</td></tr>`}
+          ${state.leaderboard.length ? state.leaderboard.map((row) => `<tr><td>${row.name}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${row.matchesPlayed}</td><td>${row.winRate}%</td></tr>`).join('') : `<tr><td colspan="6">${leaderboardMessage}</td></tr>`}
         </tbody>
       </table>
     </section>`;
