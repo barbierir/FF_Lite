@@ -1517,6 +1517,40 @@ function refreshAudioControlsUI() {
   if (toggle) toggle.textContent = isMuted ? '🔇' : '🔊';
   if (slider) slider.value = String(Math.round(audioManager.preferences.volume * 100));
 }
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+function wrapLogMatches(text, matcher, className) {
+  if (!text) return text;
+  return text.replace(matcher, (match) => `<span class="${className}">${match}</span>`);
+}
+function formatLogLine(line) {
+  const fighters = state.match?.fighters ?? [];
+  let html = escapeHtml(line);
+  fighters
+    .map((fighter) => fighter?.name)
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .forEach((name) => {
+      const safeName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      html = wrapLogMatches(html, new RegExp(safeName, 'g'), 'log-name');
+    });
+  html = wrapLogMatches(html, /\b(colpisce|autosabota|trionfa|crolla|carica|pareggio)\b/gi, 'log-action');
+  html = wrapLogMatches(html, /\b\d+\b(?= danni? aromatici|!)/gi, 'log-result');
+  html = wrapLogMatches(html, /\b(danni aromatici|boomerang|nebbia verdognola|tossico)\b/gi, 'log-result');
+  return html;
+}
+function renderBattleLogEntries() {
+  if (!state.logs.length) {
+    return '<p class="log-empty"><span class="log-empty-kicker">Battle starting…</span><span class="log-empty-copy">The goblins are eyeing each other and sizing up the stinkiest opener.</span></p>';
+  }
+  return state.logs.map((line, index) => `<p class="log-line log-entry-in" data-log-row="${index % 2}" style="--log-delay:${Math.min(index, 3) * 22}ms"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${formatLogLine(line)}</span></p>`).join('');
+}
 function updateMatchUI() {
   if (!(state.screen === 'match' || state.screen === 'postmatch') || !state.match) return;
   state.match.fighters.forEach((fighter, index) => {
@@ -1536,12 +1570,14 @@ function updateMatchUI() {
   if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
   if (logPanel) {
-    const nextMarkup = state.logs.length
-      ? state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${line}</span></p>`).join('')
-      : '<p class="log-empty">Waiting for the next goblin disaster…</p>';
+    const nextMarkup = renderBattleLogEntries();
     if (logPanel.dataset.lastMarkup !== nextMarkup) {
+      const shouldPinToLatest = logPanel.scrollHeight - logPanel.scrollTop - logPanel.clientHeight < 28;
       logPanel.innerHTML = nextMarkup;
       logPanel.dataset.lastMarkup = nextMarkup;
+      if (state.logs.length && shouldPinToLatest) {
+        logPanel.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   }
   if (state.screen === 'postmatch') triggerResultEffects();
@@ -2288,7 +2324,7 @@ function renderMatchOrPost() {
             <span class="status-chip" data-live="true">Live feed</span>
           </div>
           <div id="log-lines" class="list-stagger">
-            ${state.logs.length ? state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${line}</span></p>`).join('') : '<p class="log-empty">Waiting for the next goblin disaster…</p>'}
+            ${renderBattleLogEntries()}
           </div>
         </div>
       </div>
