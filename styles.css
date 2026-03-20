@@ -685,48 +685,43 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .subtext { text-align: center; color: var(--muted); line-height: 1.45; }
 
-.link-box {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+.share-link-row {
+  display: flex;
   align-items: stretch;
+  gap: 12px;
   padding: 14px;
   background: linear-gradient(180deg, rgba(255,255,250,0.98), rgba(236, 247, 223, 0.95));
   border-radius: 20px;
   border: 1px solid rgba(76, 110, 81, 0.14);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
-  overflow: hidden;
-}
-.link-field {
-  min-width: 0;
-  min-height: 52px;
-  display: flex;
-  align-items: center;
-  padding: 0 1.2rem;
-  border-radius: 16px;
-  background: rgba(255,255,255,0.9);
-  border: 1px solid rgba(76, 110, 81, 0.14);
-  box-shadow: inset 0 1px 2px rgba(136, 168, 111, 0.08);
-  overflow: hidden;
   box-sizing: border-box;
 }
-.link-field-text {
-  display: block;
-  width: 100%;
+.share-link-display {
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0.95rem 1.2rem;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid rgba(76, 110, 81, 0.16);
+  box-shadow: inset 0 1px 2px rgba(136, 168, 111, 0.08);
+  box-sizing: border-box;
   color: var(--text-soft);
   font: inherit;
   font-size: 0.98rem;
   font-weight: 700;
   line-height: 1.45;
   white-space: nowrap;
-  text-overflow: ellipsis;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
-.link-box button {
+.share-link-copy {
+  flex: 0 0 auto;
   align-self: stretch;
   min-width: 132px;
-  min-height: 52px;
+  min-height: 56px;
   padding-inline: 1.15rem;
 }
 .footer-actions {
@@ -1221,7 +1216,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .activity-item,
 .preview-entry,
 .leaderboard-entry,
-.link-box,
+.share-link-row,
 .fighter-header,
 .result-banner,
 .status-card {
@@ -1232,7 +1227,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .leaderboard-section-head,
 .status-card,
 .challenge-card,
-.link-box,
+.share-link-row,
 .log-head-row,
 .leaderboard-header,
 .match-status-cluster,
@@ -1599,19 +1594,16 @@ button:disabled { opacity: 0.6; cursor: default; }
   .topbar-nav { width: 100%; justify-content: stretch; }
   .topbar-nav .nav-pill { flex: 1 1 calc(50% - 8px); }
   .audio-controls { width: 100%; justify-content: center; }
-  .link-box {
-    grid-template-columns: 1fr;
+  .share-link-row {
+    flex-direction: column;
     gap: 12px;
     padding: 16px;
   }
-  .link-field,
-  .link-box-input {
+  .share-link-display,
+  .share-link-copy {
     min-height: 54px;
   }
-  .link-box-input {
-    padding: 0.9rem 1rem;
-  }
-  .link-box button {
+  .share-link-copy {
     width: 100%;
     min-width: 0;
   }
@@ -1679,7 +1671,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .preview-entry,
 .leaderboard-entry,
 .fighter-header,
-.link-box,
+.share-link-row,
 .hero-cta-block,
 .meta-pill,
 .flow-chip,
