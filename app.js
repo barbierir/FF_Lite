@@ -1593,10 +1593,13 @@ function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex
 
 function renderStatusCard(title, body, { showHomeButton = true } = {}) {
   return `
-    <section class="panel">
-      <h1 class="screen-title">${title}</h1>
+    <section class="panel status-card world-card">
+      <div class="section-heading">
+        <span class="section-kicker">Arena sync</span>
+        <h1 class="screen-title">${title}</h1>
+      </div>
       <p class="muted">${body}</p>
-      ${showHomeButton ? '<div class="footer-actions"><button id="status-home">Home</button></div>' : ''}
+      ${showHomeButton ? '<div class="footer-actions"><button id="status-home" class="btn-primary">Home</button></div>' : ''}
     </section>`;
 }
 
@@ -1605,46 +1608,131 @@ function renderHome() {
   const challengerStatus = state.pendingMatch?.opponentJoined
     ? 'Avversario trovato: il match partirà da solo.'
     : 'In attesa che il player B apra il link.';
+  const liveItems = [
+    { label: 'Live arenas', value: state.pendingMatch?.opponentJoined ? '01' : '03', meta: state.pendingMatch?.opponentJoined ? 'Una lobby pronta a scoppiare.' : 'Goblin in cerca di sfidanti.' },
+    { label: 'Recent winner', value: 'Bogbelch', meta: 'Ha chiuso un fight in 52 sec.' },
+    { label: 'Fresh lobby', value: 'Share link', meta: 'Crea un match e mandalo in 1 tap.' },
+  ];
+  const leaderboardPreview = (state.leaderboard.rating?.length ? state.leaderboard.rating : state.leaderboard.daily).slice(0, 3);
+  const challengePanel = isChallengerView ? `
+    <div class="world-card challenge-card challenge-card-active">
+      <div class="section-heading compact">
+        <span class="section-kicker">Lobby live</span>
+        <h3>Challenge link pronto</h3>
+      </div>
+      <p class="muted">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
+      <div class="link-box">
+        <code>${state.pendingMatch.link}</code>
+        <button id="copy-link" class="btn-primary">Copia link</button>
+      </div>
+      <p class="muted">${challengerStatus}</p>
+      <div class="status-chip-row">
+        <span class="status-chip">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
+        <span class="status-chip">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
+      </div>
+    </div>` : state.pendingMatch ? `
+    <div class="world-card challenge-card">
+      <div class="section-heading compact">
+        <span class="section-kicker">Share challenge</span>
+        <h3>Link pronto per lo scontro</h3>
+      </div>
+      <p class="muted">Crea il match senza lasciare la home, poi manda il link al player B.</p>
+      <div class="link-box">
+        <code>${state.pendingMatch.link}</code>
+        <button id="copy-link" class="btn-primary">Copia link</button>
+      </div>
+      <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
+    </div>` : `
+    <div class="hero-cta-block">
+      <div class="inline-actions hero-actions">
+        <button class="btn-primary hero-cta" id="home-create">Create match</button>
+      </div>
+      <p class="cta-note">Create a link, send it, fight live. Average match: ~45–60 sec.</p>
+      <div class="how-it-works" aria-label="How it works">
+        <div class="flow-chip"><span>1</span>Create match</div>
+        <div class="flow-chip"><span>2</span>Share link</div>
+        <div class="flow-chip"><span>3</span>Fight live</div>
+      </div>
+    </div>`;
+
   return `
-    <section class="panel hero">
-      <div class="hero-copy">
-        <h1>Fart & Furious</h1>
-        ${isChallengerView ? `
-          <div class="info-card challenge-card">
-            <strong>Challenge link pronto</strong>
-            <p class="muted">Sei il challenger: il match condiviso è già stato creato e questa home ora resta agganciata alla lobby finché il player B non entra.</p>
-            <div class="link-box">
-              <code>${state.pendingMatch.link}</code>
-              <button id="copy-link">Copia link</button>
-            </div>
-            <p class="muted">${challengerStatus}</p>
-            <div class="card-grid">
-              <div class="info-card">
-                <strong>Stato</strong><br/>${state.pendingMatch.payload.status === 'active' ? 'Match attivo' : 'In attesa di join'}
-              </div>
-              <div class="info-card">
-                <strong>Player B</strong><br/>${state.pendingMatch.payload.playerB?.name || 'Nessuno ancora'}
-              </div>
-            </div>
-          </div>` : state.pendingMatch ? `
-          <div class="info-card challenge-card">
-            <strong>Challenge link pronto</strong>
-            <p class="muted">Crea il match condiviso senza lasciare la home, poi copia il link per il player B.</p>
-            <div class="link-box">
-              <code>${state.pendingMatch.link}</code>
-              <button id="copy-link">Copia link</button>
-            </div>
-            <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
-          </div>` : `
-          <div class="inline-actions">
-            <button class="secondary" id="home-create">Crea match</button>
-          </div>`}
-      </div>
-      <div class="goblin-preview home-preview">
-        ${renderAnimatedPreview('home', state.me.variantIndex)}
-        <div class="nameplate">${state.me.name}</div>
-        ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
-      </div>
+    <section class="home-layout">
+      <section class="panel hero hero-redesign world-card">
+        <div class="hero-atmosphere" aria-hidden="true">
+          <span class="mist mist-a"></span>
+          <span class="mist mist-b"></span>
+          <span class="spark spark-a"></span>
+          <span class="spark spark-b"></span>
+        </div>
+        <div class="hero-copy">
+          <div class="hero-badges">
+            <span class="badge badge-live">Live arena</span>
+            <span class="badge">2-player chaos</span>
+          </div>
+          <h1>Weird creatures. Fast fights. One filthy arena.</h1>
+          <p class="hero-lead">Jump into a strange neon pit where goblins trade reckless hits, lucky backfires, and bragging rights in under a minute.</p>
+          <div class="hero-meta">
+            <div class="meta-pill"><strong>Avg match</strong><span>45–60 sec</span></div>
+            <div class="meta-pill"><strong>Mode</strong><span>Share link multiplayer</span></div>
+          </div>
+          ${challengePanel}
+        </div>
+        <aside class="featured-fighter world-card">
+          <div class="section-heading compact">
+            <span class="section-kicker">Featured fighter</span>
+            <h3>${state.me.name}</h3>
+          </div>
+          <div class="fighter-showcase">
+            ${renderAnimatedPreview('home', state.me.variantIndex)}
+          </div>
+          <div class="fighter-tags">
+            <span class="status-chip">Class · Bog goblin</span>
+            <span class="status-chip">Trait · Chaotic stink</span>
+          </div>
+          <p class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
+          ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
+        </aside>
+      </section>
+
+      <section class="home-subgrid">
+        <section class="panel world-card live-activity">
+          <div class="section-heading compact">
+            <span class="section-kicker">World activity</span>
+            <h2 class="section-title">The arena feels alive</h2>
+          </div>
+          <div class="activity-list">
+            ${liveItems.map((item) => `
+              <article class="activity-item">
+                <div class="activity-value">${item.value}</div>
+                <div>
+                  <strong>${item.label}</strong>
+                  <p class="muted">${item.meta}</p>
+                </div>
+              </article>`).join('')}
+          </div>
+        </section>
+
+        <section class="panel world-card leaderboard-preview">
+          <div class="section-heading compact">
+            <span class="section-kicker">Leaderboard preview</span>
+            <h2 class="section-title">Top stinkers</h2>
+          </div>
+          <div class="preview-list">
+            ${leaderboardPreview.length ? leaderboardPreview.map((row, index) => `
+              <article class="preview-entry">
+                <div class="preview-rank">#${index + 1}</div>
+                <div class="preview-main">
+                  <strong>${row.name}</strong>
+                  <span>${row.wins}W · ${row.losses}L · ${row.draws}D</span>
+                </div>
+                <div class="preview-score">${row.rating || row.wins}</div>
+              </article>`).join('') : '<div class="leaderboard-empty">Leaderboard pronta a popolarsi dopo i primi match.</div>'}
+          </div>
+          <div class="footer-actions align-start">
+            <button class="ghost btn-ghost" id="home-leaderboard">Open leaderboard</button>
+          </div>
+        </section>
+      </section>
     </section>`;
 }
 function renderCreate() {
@@ -1723,11 +1811,14 @@ function hydrateMatchFromSharedState(sharedMatch) {
 function renderJoin() {
   const playerB = state.pendingMatch.payload.playerB;
   return `
-    <section class="panel hero">
+    <section class="panel hero hero-redesign world-card join-screen">
       <div>
-        <h1 class="screen-title">Avversario trovato</h1>
+        <div class="section-heading compact">
+          <span class="section-kicker">Lobby accepted</span>
+          <h1 class="screen-title">Avversario trovato</h1>
+        </div>
         <p class="muted">Sei il player B. I goblin stanno entrando nell’arena…</p>
-        <div class="info-card">
+        <div class="info-card world-card">
           <strong>Host</strong><br/>${state.pendingMatch.payload.playerA.name}
         </div>
       </div>
@@ -1744,23 +1835,33 @@ function renderMatchOrPost() {
     ? `${state.match.winner.name} wins!`
     : 'Draw!';
   return `
-    <section class="panel match-layout">
+    <section class="panel match-layout world-card">
       <div class="match-head">
         <div class="match-meta">
-          <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match'}</h1>
-          <p class="muted" data-turn-counter>Turno ${state.match.turn}</p>
+          <div class="section-heading compact">
+            <span class="section-kicker">Live arena</span>
+            <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match'}</h1>
+          </div>
+          <div class="match-status-cluster">
+            <span class="status-chip" data-turn-counter>Turno ${state.match.turn}</span>
+            <span class="status-chip">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
+          </div>
         </div>
         ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
       </div>
       <div class="arena-shell">
-        <section class="arena">
+        <section class="arena world-card">
           <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
           <div class="arena-floor" aria-hidden="true"></div>
           ${state.match.fighters.map((fighter, index) => `
             <article class="fighter fighter-${fighter.side}">
               <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}">
+                <div class="fighter-label-row">
+                  <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
+                  <span class="fighter-state">${fighter.state || 'idle'}</span>
+                </div>
                 <div class="nameplate">${fighter.name}</div>
-                <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}</div>
+                <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · arena ready</div>
               </div>
               <div class="fighter-slot">
                 <div class="fighter-transform-positioner">
@@ -1775,13 +1876,16 @@ function renderMatchOrPost() {
         </section>
       </div>
       <div class="battle-log-wrap">
-        <div class="log-panel">
-          <p class="log-heading">Battle log</p>
+        <div class="log-panel world-card">
+          <div class="log-head-row">
+            <p class="log-heading">Battle log</p>
+            <span class="status-chip">Live feed</span>
+          </div>
           <div id="log-lines">
-            ${state.logs.map((line) => `<p class="log-line">${line}</p>`).join('')}
+            ${state.logs.map((line, index) => `<p class="log-line"><span class="log-index">0${index + 1}</span>${line}</p>`).join('')}
           </div>
         </div>
-        ${isPost ? `<div class="footer-actions"><button id="post-home">Home</button><button class="secondary" id="post-leaderboard">Leaderboard</button></div>` : ''}
+        ${isPost ? `<div class="footer-actions"><button id="post-home" class="btn-primary">Home</button><button class="ghost btn-ghost" id="post-leaderboard">Leaderboard</button></div>` : ''}
       </div>
     </section>`;
 }
@@ -1814,7 +1918,7 @@ function renderLeaderboardSection(title, description, rows, status, type) {
     : status === 'error'
       ? 'Impossibile caricare questa classifica.'
       : 'Nessun risultato disponibile.';
-  return `<section class="leaderboard-section leaderboard-section-${type}">
+  return `<section class="leaderboard-section leaderboard-section-${type} world-card">
     <div class="leaderboard-section-head">
       <div>
         <p class="leaderboard-kicker">${type === 'daily' ? 'Daily board' : 'Global ladder'}</p>
@@ -1829,13 +1933,17 @@ function renderLeaderboardSection(title, description, rows, status, type) {
 }
 function renderLeaderboard() {
   return `
-    <section class="panel leaderboard-layout">
+    <section class="panel leaderboard-layout world-card">
       <div class="leaderboard-header">
-        <div>
+        <div class="section-heading">
+          <span class="section-kicker">Hall of weirdos</span>
           <h1 class="screen-title">Leaderboard</h1>
           <p class="muted">Progressi giornalieri separati dalla classifica Elo globale.</p>
         </div>
-        <div class="badge">UTC daily bucket · live sync</div>
+        <div class="leaderboard-top-meta">
+          <div class="badge badge-live">UTC daily bucket</div>
+          <div class="badge">Live sync</div>
+        </div>
       </div>
       <div class="leaderboard-columns">
         ${renderLeaderboardSection('Daily leaderboard', `Risultati del giorno (${LEADERBOARD_DAY_TIMEZONE}).`, state.leaderboard.daily, state.leaderboardStatus.daily, 'daily')}
@@ -1850,25 +1958,38 @@ function render() {
   const app = document.getElementById('app');
   app.innerHTML = `
     <main class="app-shell">
-      <nav class="topbar">
-        <button id="nav-home">Home</button>
-        ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="secondary" id="nav-create">Crea nuovo match</button>'}
-        <button class="ghost" id="nav-leaderboard">Leaderboard</button>
+      <nav class="topbar world-card">
+        <div class="brand-pill">
+          <span class="brand-mark">FF</span>
+          <div>
+            <strong>Fart & Furious</strong>
+            <small>Lite arena</small>
+          </div>
+        </div>
+        <div class="topbar-nav">
+          <button class="nav-pill ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button>
+          ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="nav-pill nav-pill-accent" id="nav-create">Crea nuovo match</button>'}
+          <button class="nav-pill ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button>
+        </div>
         <div class="audio-controls" aria-label="Audio controls">
-          <button class="ghost audio-toggle" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
+          <button class="ghost audio-toggle nav-pill" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
           <label class="audio-slider-wrap" for="audio-volume">
             <span>Vol</span>
             <input id="audio-volume" type="range" min="0" max="100" value="${Math.round(audioManager.preferences.volume * 100)}" />
           </label>
         </div>
       </nav>
-      <header class="global-header panel" role="banner" style="--header-image:url('${GLOBAL_HEADER_BACKGROUND}')">
+      <header class="global-header panel world-card" role="banner" style="--header-image:url('${GLOBAL_HEADER_BACKGROUND}')">
         <div class="global-header__overlay"></div>
         <div class="global-header__content">
-          <p class="global-header__eyebrow">Fart & Furious Lite</p>
           <div>
-            <h1 class="global-header__title">Arena condivisa, lobby live, leaderboard globale.</h1>
-            <p class="muted global-header__subtitle">Header compatto persistente su tutte le schermate senza spingere in basso il gameplay.</p>
+            <p class="global-header__eyebrow">Fart & Furious Lite</p>
+            <h1 class="global-header__title">Live goblin duels with neon stink, shareable lobbies, and fast rematches.</h1>
+            <p class="muted global-header__subtitle">A premium-feeling game shell that stays compact while the action stays front and center.</p>
+          </div>
+          <div class="header-status">
+            <span class="status-chip">Fast matches</span>
+            <span class="status-chip">Live multiplayer</span>
           </div>
         </div>
       </header>
@@ -1883,6 +2004,7 @@ function render() {
     </main>`;
 
   document.getElementById('nav-home')?.addEventListener('click', resetToHome);
+  document.getElementById('home-leaderboard')?.addEventListener('click', showLeaderboardScreen);
   document.getElementById('status-home')?.addEventListener('click', resetToHome);
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('audio-toggle')?.addEventListener('click', () => {
