@@ -67,6 +67,7 @@ const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 
 const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel'];
 const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
+const MAX_BATTLE_LOG_ENTRIES = 24;
 const LEADERBOARD_DAY_TIMEZONE = 'UTC';
 const INITIAL_RATING = 1000;
 const ELO_K_FACTOR = 24;
@@ -1549,7 +1550,7 @@ function renderBattleLogEntries() {
   if (!state.logs.length) {
     return '<p class="log-empty"><span class="log-empty-kicker">Battle starting…</span><span class="log-empty-copy">The goblins are eyeing each other and sizing up the stinkiest opener.</span></p>';
   }
-  return state.logs.map((line, index) => `<p class="log-line log-entry-in" data-log-row="${index % 2}" style="--log-delay:${Math.min(index, 3) * 22}ms"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${formatLogLine(line)}</span></p>`).join('');
+  return state.logs.map((line, index) => `<p class="log-line" data-log-row="${index % 2}"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${formatLogLine(line)}</span></p>`).join('');
 }
 function updateMatchUI() {
   if (!(state.screen === 'match' || state.screen === 'postmatch') || !state.match) return;
@@ -1576,15 +1577,18 @@ function updateMatchUI() {
       logPanel.innerHTML = nextMarkup;
       logPanel.dataset.lastMarkup = nextMarkup;
       if (state.logs.length && shouldPinToLatest) {
-        logPanel.scrollTo({ top: 0, behavior: 'smooth' });
+        logPanel.scrollTo({ top: 0, behavior: state.reducedMotion ? 'auto' : 'smooth' });
       }
+      const firstNewEntry = logPanel.querySelector('.log-line');
+      if (firstNewEntry) triggerTemporaryClass(firstNewEntry, 'log-entry-in', 220);
     }
   }
   if (state.screen === 'postmatch') triggerResultEffects();
   refreshAudioControlsUI();
 }
 function logLine(text) {
-  state.logs = [text, ...state.logs].slice(0, 5);
+  state.logs = [text, ...state.logs].slice(0, MAX_BATTLE_LOG_ENTRIES);
+  if (state.match) state.match.sharedState = { ...(state.match.sharedState || {}), logs: [...state.logs] };
   updateMatchUI();
 }
 function computeAction(attacker, defender, turn) {
@@ -1679,6 +1683,7 @@ async function syncSharedMatchState(extraState = {}) {
         finishedAt: state.match.finished ? new Date().toISOString() : undefined,
         winner,
         turn: state.match.turn,
+        logs: [...state.logs],
         fighters: state.match.fighters.map(({ slot, id, name, hp, variantIndex, state: fighterState }) => ({ slot, id, name, hp, variantIndex, state: fighterState })),
       },
     });
@@ -2049,9 +2054,7 @@ function renderHome() {
       </div>
       <p class="muted">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
       <div class="link-box">
-        <div class="link-field">
-          <input class="link-box-input" type="text" value="${state.pendingMatch.link}" readonly aria-label="Generated match link" title="${state.pendingMatch.link}" spellcheck="false" />
-        </div>
+        ${renderLinkField(state.pendingMatch.link)}
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -2068,9 +2071,7 @@ function renderHome() {
       </div>
       <p class="muted">Crea il match senza lasciare la home, poi manda il link al player B.</p>
       <div class="link-box">
-        <div class="link-field">
-          <input class="link-box-input" type="text" value="${state.pendingMatch.link}" readonly aria-label="Generated match link" title="${state.pendingMatch.link}" spellcheck="false" />
-        </div>
+        ${renderLinkField(state.pendingMatch.link)}
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -2177,9 +2178,7 @@ function renderCreate() {
       <h1 class="screen-title">Crea match</h1>
       <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
       <div class="link-box">
-        <div class="link-field">
-          <input class="link-box-input" type="text" value="${state.pendingMatch.link}" readonly aria-label="Generated match link" title="${state.pendingMatch.link}" spellcheck="false" />
-        </div>
+        ${renderLinkField(state.pendingMatch.link)}
         <button id="copy-link" class="btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -2192,6 +2191,7 @@ function renderCreate() {
 }
 function getSharedMatchProgress(sharedMatch) {
   const sharedState = sharedMatch?.sharedState || {};
+  const sharedLogs = Array.isArray(sharedState.logs) ? sharedState.logs.filter((entry) => typeof entry === 'string' && entry.trim()) : [];
   const sharedTurn = Number(sharedState.turn || 0);
   const sharedFighters = Array.isArray(sharedState.fighters) ? sharedState.fighters : [];
   const sharedHpBySlot = new Map();
@@ -2209,6 +2209,7 @@ function getSharedMatchProgress(sharedMatch) {
     sharedStateBySlot,
     winner: sharedState.winner || null,
     finished: sharedMatch?.status === 'finished' || Boolean(sharedState.winner) || Boolean(sharedState.finishedAt),
+    logs: sharedLogs.slice(0, MAX_BATTLE_LOG_ENTRIES),
   };
 }
 function isSharedStateNewerThanLocal(sharedMatch) {
@@ -2243,8 +2244,14 @@ function hydrateMatchFromSharedState(sharedMatch) {
       animationState: fighter.animationState || createAnimationState(sharedAnimationState || fighter.state || 'idle'),
     };
   });
+  if (progress.logs.length) state.logs = [...progress.logs];
   if (progress.winner) state.match.winner = progress.winner;
   if (progress.finished) state.match.finished = true;
+}
+
+function renderLinkField(url) {
+  const safeUrl = escapeHtml(url || '');
+  return `<div class="link-field" title="${safeUrl}" aria-label="Generated match link"><span class="link-field-text">${safeUrl}</span></div>`;
 }
 
 function renderJoin() {
@@ -2323,7 +2330,7 @@ function renderMatchOrPost() {
             </div>
             <span class="status-chip" data-live="true">Live feed</span>
           </div>
-          <div id="log-lines" class="list-stagger">
+          <div id="log-lines" aria-live="polite" aria-atomic="false">
             ${renderBattleLogEntries()}
           </div>
         </div>
