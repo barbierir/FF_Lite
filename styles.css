@@ -23,6 +23,17 @@
 * { box-sizing: border-box; }
 html { color-scheme: light; }
 [hidden] { display: none !important; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 body {
   margin: 0;
@@ -917,22 +928,41 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .log-line,
 .log-empty {
-  display: flex;
+  --log-accent: rgba(125, 164, 119, 0.28);
+  --log-accent-strong: rgba(125, 164, 119, 0.4);
+  --log-tint-top: rgba(255,255,250,0.98);
+  --log-tint-bottom: rgba(239, 247, 228, 0.96);
+  --log-icon-bg: rgba(222, 232, 177, 0.48);
+  --log-icon-color: #45613a;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
   margin: 0;
   min-height: 60px;
   line-height: 1.65;
   color: #173423;
   padding: 14px 16px;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255,255,250,0.98), rgba(239, 247, 228, 0.96));
+  background: linear-gradient(180deg, var(--log-tint-top), var(--log-tint-bottom));
   border: 1px solid rgba(76, 110, 81, 0.16);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.78), 0 6px 14px rgba(84, 122, 77, 0.05);
-
+  overflow: hidden;
+}
+.log-line::after,
+.log-empty::after {
+  content: '';
+  position: absolute;
+  inset: 8px auto 8px 8px;
+  width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--log-accent-strong), var(--log-accent));
+  opacity: 0.9;
 }
 .log-line[data-log-row="1"] {
-  background: linear-gradient(180deg, rgba(247, 250, 236, 0.98), rgba(232, 244, 219, 0.96));
+  --log-tint-top: rgba(247, 250, 236, 0.98);
+  --log-tint-bottom: rgba(232, 244, 219, 0.96);
 }
 .log-line + .log-line {
   position: relative;
@@ -958,6 +988,19 @@ button:disabled { opacity: 0.6; cursor: default; }
   background: rgba(225, 235, 137, 0.44);
   border: 1px solid rgba(137, 151, 50, 0.2);
 }
+.log-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  line-height: 1;
+  color: var(--log-icon-color);
+  background: var(--log-icon-bg);
+  border: 1px solid rgba(76, 110, 81, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+}
 .log-copy {
   flex: 1;
   min-width: 0;
@@ -969,21 +1012,27 @@ button:disabled { opacity: 0.6; cursor: default; }
 .log-name {
   color: #1b6a43;
   font-weight: 800;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.34);
 }
 .log-action {
-  color: #246547;
+  color: #235b40;
   font-weight: 800;
 }
 .log-result {
-  color: #8a4e1d;
+  color: #81511f;
   font-weight: 800;
+  background: linear-gradient(180deg, rgba(255, 226, 155, 0.42), rgba(255, 226, 155, 0));
+  border-radius: 0.5rem;
+  padding: 0 0.18rem;
 }
 .log-empty {
-  justify-content: center;
-  flex-direction: column;
-  text-align: center;
+  min-height: 88px;
   color: rgba(23, 52, 35, 0.78);
   font-weight: 700;
+}
+.log-empty-body {
+  display: grid;
+  gap: 4px;
 }
 .log-empty-kicker {
   font-size: 1rem;
@@ -993,6 +1042,48 @@ button:disabled { opacity: 0.6; cursor: default; }
 .log-empty-copy {
   font-size: 0.92rem;
   color: rgba(23, 52, 35, 0.74);
+}
+.log-event-attack {
+  --log-accent: rgba(186, 181, 74, 0.24);
+  --log-accent-strong: rgba(186, 181, 74, 0.5);
+  --log-icon-bg: rgba(236, 225, 133, 0.42);
+  --log-icon-color: #6c6b1f;
+}
+.log-event-hit {
+  --log-accent: rgba(61, 174, 140, 0.24);
+  --log-accent-strong: rgba(61, 174, 140, 0.54);
+  --log-icon-bg: rgba(132, 228, 196, 0.34);
+  --log-icon-color: #196652;
+}
+.log-event-backfire {
+  --log-accent: rgba(228, 155, 61, 0.22);
+  --log-accent-strong: rgba(228, 155, 61, 0.5);
+  --log-icon-bg: rgba(247, 204, 145, 0.38);
+  --log-icon-color: #8c551f;
+}
+.log-event-charge {
+  --log-accent: rgba(88, 196, 190, 0.24);
+  --log-accent-strong: rgba(88, 196, 190, 0.48);
+  --log-icon-bg: rgba(150, 233, 226, 0.34);
+  --log-icon-color: #22706d;
+}
+.log-event-victory {
+  --log-accent: rgba(190, 178, 73, 0.24);
+  --log-accent-strong: rgba(190, 178, 73, 0.52);
+  --log-icon-bg: rgba(241, 226, 144, 0.42);
+  --log-icon-color: #756519;
+}
+.log-event-defeat {
+  --log-accent: rgba(126, 142, 119, 0.22);
+  --log-accent-strong: rgba(126, 142, 119, 0.42);
+  --log-icon-bg: rgba(204, 214, 198, 0.4);
+  --log-icon-color: #5a6554;
+}
+.log-event-neutral {
+  --log-accent: rgba(125, 164, 119, 0.2);
+  --log-accent-strong: rgba(125, 164, 119, 0.4);
+  --log-icon-bg: rgba(214, 228, 183, 0.34);
+  --log-icon-color: #49613b;
 }
 .result-banner {
   padding: 16px 18px;
