@@ -716,7 +716,19 @@ async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) 
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Richiesta backend fallita (${response.status}).`);
+    const detail = [
+      `Supabase ${normalizedMethod} ${pathname} failed`,
+      `status=${response.status}`,
+      message || 'empty response body',
+    ].join(' | ');
+    console.error('[supabase] request failed', {
+      method: normalizedMethod,
+      pathname,
+      status: response.status,
+      body,
+      responseBody: message,
+    });
+    throw new Error(detail);
   }
   if (response.status === 204) return null;
   return response.json();
