@@ -2086,10 +2086,7 @@ function renderHome() {
         <h3>Challenge link pronto</h3>
       </div>
       <p class="muted challenge-card-text">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
-      <div class="link-box">
-        ${renderLinkField(state.pendingMatch.link)}
-        <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
-      </div>
+      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
       ${copyFeedbackMarkup}
       <p class="muted challenge-card-text">${challengerStatus}</p>
       <div class="status-chip-row">
@@ -2103,10 +2100,7 @@ function renderHome() {
         <h3>Link pronto per lo scontro</h3>
       </div>
       <p class="muted challenge-card-text">Crea il match senza lasciare la home, poi manda il link al player B.</p>
-      <div class="link-box">
-        ${renderLinkField(state.pendingMatch.link)}
-        <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
-      </div>
+      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
       ${copyFeedbackMarkup}
       <p class="muted challenge-card-text">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
     </div>` : `
@@ -2210,10 +2204,7 @@ function renderCreate() {
     <section class="panel screen-panel">
       <h1 class="screen-title">Crea match</h1>
       <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
-      <div class="link-box">
-        ${renderLinkField(state.pendingMatch.link)}
-        <button id="copy-link" class="btn-bounce">Copia link</button>
-      </div>
+      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
       <p class="muted">Questa schermata controlla il match condiviso ogni pochi secondi. Quando il player B entra, il match parte automaticamente anche qui senza refresh.</p>
       <div class="goblin-preview" style="margin-top:18px;">
@@ -2282,9 +2273,14 @@ function hydrateMatchFromSharedState(sharedMatch) {
   if (progress.finished) state.match.finished = true;
 }
 
-function renderLinkField(url) {
+function renderShareLinkRow(url, { buttonClass = 'btn-bounce', buttonLabel = 'Copia link' } = {}) {
   const safeUrl = escapeHtml(url || '');
-  return `<div class="link-field" title="${safeUrl}" aria-label="Generated match link"><span class="link-field-text">${safeUrl}</span></div>`;
+  const safeButtonClass = escapeHtml(buttonClass);
+  const safeButtonLabel = escapeHtml(buttonLabel);
+  return `<div class="share-link-row">
+    <div class="share-link-display" title="${safeUrl}" aria-label="Generated match link">${safeUrl}</div>
+    <button id="copy-link" class="share-link-copy ${safeButtonClass}" type="button">${safeButtonLabel}</button>
+  </div>`;
 }
 
 function renderJoin() {
