@@ -33,14 +33,25 @@ const AUDIO_CONFIG = {
     volume: 0.32,
   },
   sfx: {
-    attack: { src: '/audio/attack.mp3', volume: 0.8 }, // Placeholder audio path: replace/add the real SFX manually later.
-    recharge: { src: '/audio/recharge.mp3', volume: 0.7 },
-    backfire: { src: '/audio/backfire.mp3', volume: 0.78 },
-    hit: { src: '/audio/hit.mp3', volume: 0.72 },
-    victory: { src: '/audio/victory.mp3', volume: 0.82 },
-    defeat: { src: '/audio/defeat.mp3', volume: 0.72 },
-    matchStart: { src: '/audio/match_start.mp3', volume: 0.65 },
-    matchEnd: { src: '/audio/match_end.mp3', volume: 0.65 },
+    attack_1: { kind: 'synth', preset: 'attack', variant: 1, volume: 0.84, cooldown: 110 },
+    attack_2: { kind: 'synth', preset: 'attack', variant: 2, volume: 0.8, cooldown: 110 },
+    attack_3: { kind: 'synth', preset: 'attack', variant: 3, volume: 0.82, cooldown: 110 },
+    charge_1: { kind: 'synth', preset: 'charge', variant: 1, volume: 0.68, cooldown: 140 },
+    charge_2: { kind: 'synth', preset: 'charge', variant: 2, volume: 0.7, cooldown: 140 },
+    charge_3: { kind: 'synth', preset: 'charge', variant: 3, volume: 0.72, cooldown: 140 },
+    backfire_1: { kind: 'synth', preset: 'backfire', variant: 1, volume: 0.8, cooldown: 180 },
+    backfire_2: { kind: 'synth', preset: 'backfire', variant: 2, volume: 0.82, cooldown: 180 },
+    hit_1: { kind: 'synth', preset: 'hit', variant: 1, volume: 0.7, cooldown: 100 },
+    hit_2: { kind: 'synth', preset: 'hit', variant: 2, volume: 0.74, cooldown: 100 },
+    victory: { kind: 'synth', preset: 'victory', volume: 0.8, cooldown: 300 },
+    defeat: { kind: 'synth', preset: 'defeat', volume: 0.66, cooldown: 300 },
+    matchStart: { kind: 'synth', preset: 'matchStart', volume: 0.56, cooldown: 220 },
+    resultReveal: { kind: 'synth', preset: 'resultReveal', volume: 0.58, cooldown: 280 },
+    uiConfirm: { kind: 'synth', preset: 'uiConfirm', volume: 0.32, cooldown: 120 },
+    uiTab: { kind: 'synth', preset: 'uiTab', volume: 0.24, cooldown: 90 },
+    uiLeaderboard: { kind: 'synth', preset: 'uiLeaderboard', volume: 0.26, cooldown: 120 },
+    uiCopy: { kind: 'synth', preset: 'uiCopy', volume: 0.3, cooldown: 120 },
+    uiToggle: { kind: 'synth', preset: 'uiToggle', volume: 0.22, cooldown: 90 },
   },
 };
 const ANIMATION_CONFIG = {
@@ -85,14 +96,142 @@ const MATCH_ACTION_OVERLAP = {
   backfireImpactLeadIn: 1050,
 };
 const MATCH_SOUND_OFFSETS = {
-  recharge: 0,
+  charge: 0,
   attack: 1000,
   hit: 0,
   backfire: 1050,
   victory: 0,
   defeat: 0,
   matchStart: 0,
-  matchEnd: 0,
+  resultReveal: 0,
+};
+const SOUND_VARIATION_MAP = {
+  attack: ['attack_1', 'attack_2', 'attack_3'],
+  charge: ['charge_1', 'charge_2', 'charge_3'],
+  hit: ['hit_1', 'hit_2'],
+  backfire: ['backfire_1', 'backfire_2'],
+  victory: ['victory'],
+  defeat: ['defeat'],
+  matchStart: ['matchStart'],
+  resultReveal: ['resultReveal'],
+  uiConfirm: ['uiConfirm'],
+  uiTab: ['uiTab'],
+  uiLeaderboard: ['uiLeaderboard'],
+  uiCopy: ['uiCopy'],
+  uiToggle: ['uiToggle'],
+};
+const UI_SOUND_MAP = {
+  createMatch: 'uiConfirm',
+  copySuccess: 'uiCopy',
+  navTab: 'uiTab',
+  leaderboardOpen: 'uiLeaderboard',
+  audioToggle: 'uiToggle',
+};
+const BATTLE_SOUND_MAP = {
+  charge: 'charge',
+  attack: 'attack',
+  hit: 'hit',
+  backfire: 'backfire',
+};
+const RESULT_SOUND_MAP = {
+  intro: 'matchStart',
+  reveal: 'resultReveal',
+  victory: 'victory',
+  defeat: 'defeat',
+};
+const SYNTH_PRESET_FACTORIES = {
+  attack: (variant = 1) => ({
+    duration: 0.16 + variant * 0.01,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 240 - variant * 12, endFreq: 120 - variant * 8, gain: 0.7, attack: 0.002, decay: 0.14 },
+      { type: 'osc', wave: 'square', startFreq: 110 + variant * 18, endFreq: 80, gain: 0.18, attack: 0.001, decay: 0.1 },
+      { type: 'noise', gain: 0.18, attack: 0.001, decay: 0.05, bandpass: 900 + variant * 120, q: 0.9 },
+    ],
+  }),
+  charge: (variant = 1) => ({
+    duration: 0.2 + variant * 0.015,
+    layers: [
+      { type: 'osc', wave: 'sine', startFreq: 280 + variant * 30, endFreq: 520 + variant * 40, gain: 0.34, attack: 0.012, decay: 0.18 },
+      { type: 'osc', wave: 'triangle', startFreq: 410 + variant * 24, endFreq: 660 + variant * 42, gain: 0.22, attack: 0.008, decay: 0.16 },
+    ],
+  }),
+  backfire: (variant = 1) => ({
+    duration: 0.2 + variant * 0.02,
+    layers: [
+      { type: 'osc', wave: 'square', startFreq: 230 + variant * 12, endFreq: 95, gain: 0.32, attack: 0.001, decay: 0.18 },
+      { type: 'osc', wave: 'triangle', startFreq: 160, endFreq: 70, gain: 0.28, attack: 0.001, decay: 0.2 },
+      { type: 'noise', gain: 0.22, attack: 0.001, decay: 0.08, lowpass: 1000 + variant * 120 },
+    ],
+  }),
+  hit: (variant = 1) => ({
+    duration: 0.12 + variant * 0.015,
+    layers: [
+      { type: 'noise', gain: 0.22, attack: 0.001, decay: 0.04, bandpass: 720 + variant * 110, q: 1.2 },
+      { type: 'osc', wave: 'triangle', startFreq: 180 - variant * 10, endFreq: 90, gain: 0.42, attack: 0.001, decay: 0.08 },
+    ],
+  }),
+  victory: () => ({
+    duration: 0.34,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 392, endFreq: 392, gain: 0.2, attack: 0.01, decay: 0.28, startAt: 0 },
+      { type: 'osc', wave: 'triangle', startFreq: 494, endFreq: 494, gain: 0.2, attack: 0.01, decay: 0.28, startAt: 0.035 },
+      { type: 'osc', wave: 'triangle', startFreq: 587, endFreq: 587, gain: 0.22, attack: 0.01, decay: 0.28, startAt: 0.07 },
+    ],
+  }),
+  defeat: () => ({
+    duration: 0.26,
+    layers: [
+      { type: 'osc', wave: 'sawtooth', startFreq: 260, endFreq: 150, gain: 0.18, attack: 0.004, decay: 0.22 },
+      { type: 'osc', wave: 'triangle', startFreq: 180, endFreq: 95, gain: 0.16, attack: 0.004, decay: 0.24 },
+    ],
+  }),
+  matchStart: () => ({
+    duration: 0.18,
+    layers: [
+      { type: 'osc', wave: 'sine', startFreq: 330, endFreq: 360, gain: 0.18, attack: 0.008, decay: 0.15 },
+      { type: 'osc', wave: 'triangle', startFreq: 440, endFreq: 480, gain: 0.16, attack: 0.008, decay: 0.15 },
+    ],
+  }),
+  resultReveal: () => ({
+    duration: 0.16,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 390, endFreq: 430, gain: 0.16, attack: 0.006, decay: 0.14 },
+      { type: 'osc', wave: 'triangle', startFreq: 520, endFreq: 560, gain: 0.16, attack: 0.006, decay: 0.14 },
+      { type: 'osc', wave: 'triangle', startFreq: 650, endFreq: 690, gain: 0.15, attack: 0.006, decay: 0.14 },
+    ],
+  }),
+  uiConfirm: () => ({
+    duration: 0.09,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 620, endFreq: 560, gain: 0.18, attack: 0.001, decay: 0.08 },
+    ],
+  }),
+  uiTab: () => ({
+    duration: 0.07,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 520, endFreq: 480, gain: 0.14, attack: 0.001, decay: 0.06 },
+    ],
+  }),
+  uiLeaderboard: () => ({
+    duration: 0.11,
+    layers: [
+      { type: 'osc', wave: 'sine', startFreq: 540, endFreq: 560, gain: 0.12, attack: 0.002, decay: 0.1 },
+      { type: 'osc', wave: 'triangle', startFreq: 680, endFreq: 700, gain: 0.1, attack: 0.002, decay: 0.1 },
+    ],
+  }),
+  uiCopy: () => ({
+    duration: 0.1,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 660, endFreq: 700, gain: 0.12, attack: 0.001, decay: 0.08 },
+      { type: 'osc', wave: 'sine', startFreq: 880, endFreq: 930, gain: 0.1, attack: 0.001, decay: 0.08 },
+    ],
+  }),
+  uiToggle: () => ({
+    duration: 0.08,
+    layers: [
+      { type: 'osc', wave: 'triangle', startFreq: 460, endFreq: 420, gain: 0.12, attack: 0.001, decay: 0.06 },
+    ],
+  }),
 };
 const COMBAT_EFFECT_DURATIONS = {
   actor: 340,
@@ -228,10 +367,12 @@ class AudioManager {
     this.bgm = null;
     this.sfxCache = new Map();
     this.sfxCooldowns = new Map();
+    this.lastVariantByGroup = new Map();
     this.minInterval = 120;
     this.failed = false;
     this.autoplayBlocked = false;
     this.autoplayArmed = false;
+    this.audioContext = null;
     this.boundResume = this.resumeFromInteraction.bind(this);
   }
   savePreferences() {
@@ -261,6 +402,10 @@ class AudioManager {
     if (this.sfxCache.has(name)) return this.sfxCache.get(name);
     const entry = this.config.sfx[name];
     if (!entry) return null;
+    if (entry.kind === 'synth') {
+      this.sfxCache.set(name, entry);
+      return entry;
+    }
     try {
       const audio = new Audio(entry.src);
       audio.preload = 'auto';
@@ -275,12 +420,82 @@ class AudioManager {
       return null;
     }
   }
+  preloadSfx() {
+    Object.keys(this.config.sfx).forEach((name) => this.ensureSfx(name));
+  }
+  getAudioContext() {
+    if (this.audioContext) return this.audioContext;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    this.audioContext = new Ctx();
+    return this.audioContext;
+  }
+  createNoiseBuffer(context, duration = 0.12) {
+    const frameCount = Math.max(1, Math.floor(context.sampleRate * duration));
+    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < frameCount; i += 1) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    return buffer;
+  }
+  playSynthSfx(entry) {
+    const context = this.getAudioContext();
+    if (!context) return;
+    if (context.state === 'suspended') context.resume().catch(() => {});
+    const factory = SYNTH_PRESET_FACTORIES[entry.preset];
+    const recipe = typeof factory === 'function' ? factory(entry.variant) : null;
+    if (!recipe?.layers?.length) return;
+    const master = context.createGain();
+    master.gain.value = this.getEffectiveVolume(entry.volume);
+    master.connect(context.destination);
+    const startTime = context.currentTime + 0.002;
+    recipe.layers.forEach((layer) => {
+      const layerStart = startTime + (layer.startAt || 0);
+      const attack = Math.max(0.001, layer.attack || 0.001);
+      const decay = Math.max(0.01, layer.decay || recipe.duration || 0.1);
+      const gainNode = context.createGain();
+      gainNode.gain.setValueAtTime(0.0001, layerStart);
+      gainNode.gain.linearRampToValueAtTime(Math.max(0.0001, layer.gain || 0.1), layerStart + attack);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, layerStart + decay);
+      gainNode.connect(master);
+      let source = null;
+      if (layer.type === 'noise') {
+        source = context.createBufferSource();
+        source.buffer = this.createNoiseBuffer(context, recipe.duration || 0.12);
+        let tail = gainNode;
+        if (layer.bandpass) {
+          const filter = context.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.value = layer.bandpass;
+          filter.Q.value = layer.q || 1;
+          source.connect(filter);
+          tail = filter;
+        } else if (layer.lowpass) {
+          const filter = context.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = layer.lowpass;
+          source.connect(filter);
+          tail = filter;
+        }
+        tail.connect(gainNode);
+      } else {
+        source = context.createOscillator();
+        source.type = layer.wave || 'sine';
+        source.frequency.setValueAtTime(layer.startFreq || 440, layerStart);
+        source.frequency.linearRampToValueAtTime(layer.endFreq || layer.startFreq || 440, layerStart + decay);
+        source.connect(gainNode);
+      }
+      source.start(layerStart);
+      source.stop(layerStart + decay + 0.03);
+    });
+  }
   applyPreferences() {
     const bgm = this.ensureBgm();
     if (bgm) bgm.volume = this.getEffectiveVolume(this.config.bgm.volume);
     Object.entries(this.config.sfx).forEach(([name, entry]) => {
       const audio = this.sfxCache.get(name);
-      if (audio) audio.volume = this.getEffectiveVolume(entry.volume);
+      if (audio && entry.kind !== 'synth') audio.volume = this.getEffectiveVolume(entry.volume);
     });
   }
   setMuted(muted) {
@@ -330,6 +545,7 @@ class AudioManager {
   }
   initializeForHome() {
     this.ensureBgm();
+    this.preloadSfx();
     this.tryStartBgm();
   }
   syncHomePlayback() {
@@ -344,24 +560,55 @@ class AudioManager {
     await this.tryStartBgm();
   }
   playSfx(name) {
+    const entry = this.config.sfx[name];
     const audio = this.ensureSfx(name);
-    if (!audio) return;
+    if (!audio || !entry) return;
     const now = performance.now();
+    const cooldown = entry.cooldown ?? this.minInterval;
     const last = this.sfxCooldowns.get(name) || 0;
-    if (now - last < this.minInterval) return;
+    if (now - last < cooldown) return;
     this.sfxCooldowns.set(name, now);
+    if (entry.kind === 'synth') {
+      this.playSynthSfx(entry);
+      return;
+    }
     try {
       audio.pause();
       audio.currentTime = 0;
-      audio.volume = this.getEffectiveVolume(this.config.sfx[name].volume);
+      audio.volume = this.getEffectiveVolume(entry.volume);
       audio.play().catch(() => {});
     } catch {
       // Missing file or browser restriction: fail silently.
     }
   }
+  playVariant(groupName) {
+    const choices = SOUND_VARIATION_MAP[groupName];
+    if (!choices?.length) return;
+    let next = choices[0];
+    if (choices.length > 1) {
+      const last = this.lastVariantByGroup.get(groupName);
+      do {
+        next = choices[randomInt(0, choices.length - 1)];
+      } while (choices.length > 1 && next === last);
+      this.lastVariantByGroup.set(groupName, next);
+    }
+    this.playSfx(next);
+  }
 }
 
 const audioManager = new AudioManager(AUDIO_CONFIG, loadAudioPreferences());
+function playUiSfx(type) {
+  const key = UI_SOUND_MAP[type];
+  if (key) audioManager.playVariant(key);
+}
+function playBattleSfx(type) {
+  const key = BATTLE_SOUND_MAP[type];
+  if (key) audioManager.playVariant(key);
+}
+function playResultSfx(type) {
+  const key = RESULT_SOUND_MAP[type];
+  if (key) audioManager.playVariant(key);
+}
 
 function randomInt(min, max) {
   const lower = Math.ceil(Math.min(min, max));
@@ -1129,6 +1376,7 @@ function parseJoinMatchId() {
   return params.get('matchId');
 }
 function resetToHome() {
+  playUiSfx('navTab');
   state.booting = false;
   window.history.replaceState({}, '', window.location.pathname);
   clearRuntimeMatchState({ clearWatcher: true });
@@ -1141,7 +1389,9 @@ function resetToHome() {
   render();
 }
 function showLeaderboardScreen() {
+  playUiSfx('navTab');
   state.screen = 'leaderboard';
+  playUiSfx('leaderboardOpen');
   audioManager.syncHomePlayback();
   render();
   loadLeaderboard();
@@ -1152,6 +1402,7 @@ async function startCreateFlow() {
   state.loading = true;
   state.errorMessage = '';
   state.screen = 'home';
+  playUiSfx('createMatch');
   render();
   try {
     const payload = makeMatchPayload();
@@ -1574,7 +1825,10 @@ async function runMatchActionGroup(actions, totalDuration) {
       updateMatchUI();
     }, startAt);
     if (action.sound) {
-      schedule(() => audioManager.playSfx(action.sound), startAt + (action.soundDelay ?? 0));
+      schedule(() => {
+        if (action.soundGroup === 'result') playResultSfx(action.sound);
+        else playBattleSfx(action.sound);
+      }, startAt + (action.soundDelay ?? 0));
     }
     if (action.apply) {
       schedule(() => {
@@ -1600,8 +1854,8 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
       sourceIndex: attackerIndex,
       targetIndex: defenderIndex,
       animation: 'recharge',
-      sound: 'recharge',
-      soundDelay: MATCH_SOUND_OFFSETS.recharge,
+      sound: 'charge',
+      soundDelay: MATCH_SOUND_OFFSETS.charge,
       duration: MATCH_ACTION_TIMINGS.recharge,
     }],
   }];
@@ -1664,7 +1918,7 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
 async function runMatchSequence() {
   const [a, b] = state.match.fighters;
   audioManager.syncHomePlayback();
-  await runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'matchStart', duration: MATCH_ACTION_TIMINGS.intro });
+  await runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'intro', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.intro });
   while (!state.match.finished) {
     state.match.turn += 1;
     const attackerIndex = state.match.turn % 2 === 1 ? 0 : 1;
@@ -1690,7 +1944,7 @@ async function finishMatch() {
     state.match.winner = null;
     setAllFighterStates('idle');
     await updateLeaderboardForResult(null, null, true);
-    await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'matchEnd', duration: MATCH_ACTION_TIMINGS.draw, log: 'Pareggio tossico: nessuno crolla davvero.' });
+    await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'reveal', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.draw, log: 'Pareggio tossico: nessuno crolla davvero.' });
   } else {
     const winner = a.hp > b.hp ? a : b;
     const loser = winner === a ? b : a;
@@ -1703,12 +1957,13 @@ async function finishMatch() {
       targetIndex: winner === a ? 1 : 0,
       animation: 'victory',
       targetAnimation: 'defeat',
-      sound: 'matchEnd',
+      sound: 'reveal',
+      soundGroup: 'result',
       duration: MATCH_ACTION_TIMINGS.victory,
       log: `${winner.name} trionfa nella nebbia verdognola.`,
     });
-    audioManager.playSfx('victory');
-    audioManager.playSfx('defeat');
+    playResultSfx('victory');
+    playResultSfx('defeat');
     await updateLeaderboardForResult(winner, loser, false);
   }
   state.screen = 'postmatch';
@@ -2135,6 +2390,7 @@ function render() {
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('audio-toggle')?.addEventListener('click', () => {
     audioManager.setMuted(!audioManager.preferences.muted);
+    playUiSfx('audioToggle');
     refreshAudioControlsUI();
   });
   document.getElementById('audio-volume')?.addEventListener('input', (event) => {
@@ -2151,6 +2407,7 @@ function render() {
     try {
       await navigator.clipboard.writeText(state.pendingMatch.link);
       state.copyFeedback = 'Link copied!';
+      playUiSfx('copySuccess');
       copyButton?.classList.add('copy-success');
       triggerTemporaryClass(copyButton, 'is-pop', 230);
       logLine('Link copiato negli appunti.');
