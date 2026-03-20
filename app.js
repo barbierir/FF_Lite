@@ -1536,7 +1536,9 @@ function updateMatchUI() {
   if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
   if (logPanel) {
-    const nextMarkup = state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">0${index + 1}</span>${line}</p>`).join('');
+    const nextMarkup = state.logs.length
+      ? state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${line}</span></p>`).join('')
+      : '<p class="log-empty">Waiting for the next goblin disaster…</p>';
     if (logPanel.dataset.lastMarkup !== nextMarkup) {
       logPanel.innerHTML = nextMarkup;
       logPanel.dataset.lastMarkup = nextMarkup;
@@ -2011,7 +2013,9 @@ function renderHome() {
       </div>
       <p class="muted">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
       <div class="link-box">
-        <code title="${state.pendingMatch.link}" aria-label="Generated match link">${state.pendingMatch.link}</code>
+        <div class="link-field">
+          <input class="link-box-input" type="text" value="${state.pendingMatch.link}" readonly aria-label="Generated match link" title="${state.pendingMatch.link}" spellcheck="false" />
+        </div>
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -2028,7 +2032,9 @@ function renderHome() {
       </div>
       <p class="muted">Crea il match senza lasciare la home, poi manda il link al player B.</p>
       <div class="link-box">
-        <code title="${state.pendingMatch.link}" aria-label="Generated match link">${state.pendingMatch.link}</code>
+        <div class="link-field">
+          <input class="link-box-input" type="text" value="${state.pendingMatch.link}" readonly aria-label="Generated match link" title="${state.pendingMatch.link}" spellcheck="false" />
+        </div>
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -2135,7 +2141,9 @@ function renderCreate() {
       <h1 class="screen-title">Crea match</h1>
       <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
       <div class="link-box">
-        <code title="${state.pendingMatch.link}" aria-label="Generated match link">${state.pendingMatch.link}</code>
+        <div class="link-field">
+          <input class="link-box-input" type="text" value="${state.pendingMatch.link}" readonly aria-label="Generated match link" title="${state.pendingMatch.link}" spellcheck="false" />
+        </div>
         <button id="copy-link" class="btn-bounce">Copia link</button>
       </div>
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
@@ -2273,14 +2281,16 @@ function renderMatchOrPost() {
       <div class="battle-log-wrap">
         <div class="log-panel world-card">
           <div class="log-head-row">
-            <p class="log-heading">Battle log</p>
+            <div class="log-heading-group">
+              <p class="log-heading">Battle log</p>
+              <p class="log-subheading">Fresh arena events stack at the top for quick scanning.</p>
+            </div>
             <span class="status-chip" data-live="true">Live feed</span>
           </div>
           <div id="log-lines" class="list-stagger">
-            ${state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">0${index + 1}</span>${line}</p>`).join('')}
+            ${state.logs.length ? state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-copy">${line}</span></p>`).join('') : '<p class="log-empty">Waiting for the next goblin disaster…</p>'}
           </div>
         </div>
-        ${isPost ? `<div class="footer-actions"><button id="post-home" class="btn-primary btn-bounce">Home</button><button class="ghost btn-ghost btn-bounce" id="post-leaderboard">Leaderboard</button></div>` : ''}
       </div>
     </section>`;
 }
@@ -2424,8 +2434,6 @@ function render() {
       if (nextFeedbackNode) nextFeedbackNode.textContent = '';
     }, 1500);
   });
-  document.getElementById('post-home')?.addEventListener('click', resetToHome);
-  document.getElementById('post-leaderboard')?.addEventListener('click', showLeaderboardScreen);
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
     const variantIndex = Number(node.dataset.variantIndex);
