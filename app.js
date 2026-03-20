@@ -53,16 +53,31 @@ const PALETTE_VARIANTS = [
   { hue: 90, sat: 1.2, bright: 1 },
 ];
 
+const ACTION_DURATION_MS = 1500;
 const MATCH_ACTION_TIMINGS = {
   intro: 450,
-  recharge: 520,
-  attack: 460,
-  hit: 420,
-  backfire: 520,
+  recharge: ACTION_DURATION_MS,
+  attack: ACTION_DURATION_MS,
+  hit: ACTION_DURATION_MS,
+  backfire: ACTION_DURATION_MS,
   defeat: 780,
   idle: 250,
   victory: 900,
   draw: 700,
+};
+const MATCH_ACTION_OVERLAP = {
+  attackImpactLeadIn: 1000,
+  backfireImpactLeadIn: 1050,
+};
+const MATCH_SOUND_OFFSETS = {
+  recharge: 0,
+  attack: 1000,
+  hit: 0,
+  backfire: 1050,
+  victory: 0,
+  defeat: 0,
+  matchStart: 0,
+  matchEnd: 0,
 };
 
 const state = {
@@ -286,12 +301,34 @@ function getStoredPlayerProfile() {
 function getDeterministicVariantIndex(playerId, creatureId = 'goblin') {
   return hashString(`${playerId}:${creatureId}`) % PALETTE_VARIANTS.length;
 }
+function normalizeVariantIndex(variantIndex) {
+  if (!Number.isInteger(variantIndex)) return null;
+  return ((variantIndex % PALETTE_VARIANTS.length) + PALETTE_VARIANTS.length) % PALETTE_VARIANTS.length;
+}
+function getDistinctVariantIndex(player, opponentVariantIndex, { preserveExisting = true } = {}) {
+  const creatureId = player.creatureId || 'goblin';
+  const existingVariantIndex = normalizeVariantIndex(player.variantIndex);
+  const baseVariantIndex = preserveExisting && existingVariantIndex != null
+    ? existingVariantIndex
+    : getDeterministicVariantIndex(player.id, creatureId);
+  const rivalVariantIndex = normalizeVariantIndex(opponentVariantIndex);
+  if (rivalVariantIndex == null || PALETTE_VARIANTS.length < 2 || baseVariantIndex !== rivalVariantIndex) {
+    return baseVariantIndex;
+  }
+  return (baseVariantIndex + 1 + (hashString(`${player.id}:${creatureId}:variant-reroll`) % (PALETTE_VARIANTS.length - 1))) % PALETTE_VARIANTS.length;
+}
+function withResolvedVariant(player, opponentVariantIndex, options) {
+  const variantIndex = getDistinctVariantIndex(player, opponentVariantIndex, options);
+  return {
+    ...player,
+    variantIndex,
+    variant: PALETTE_VARIANTS[variantIndex],
+  };
+}
 function buildPlayerProfile(profile = {}) {
   const creatureId = profile.creatureId || 'goblin';
   const id = profile.id || crypto.randomUUID();
-  const variantIndex = Number.isInteger(profile.variantIndex)
-    ? profile.variantIndex
-    : getDeterministicVariantIndex(id, creatureId);
+  const variantIndex = normalizeVariantIndex(profile.variantIndex) ?? getDeterministicVariantIndex(id, creatureId);
   return {
     id,
     name: profile.name || generateFunnyName(id),
@@ -693,7 +730,12 @@ async function startJoinedFlow(matchId) {
   state.errorMessage = '';
   render();
   try {
-    const sharedMatch = await joinSharedMatch(matchId, { id: state.me.id, name: state.me.name, creatureId: state.me.creatureId, variantIndex: state.me.variantIndex });
+    const hostMatch = await getSharedMatch(matchId);
+    if (!hostMatch?.playerA) throw new Error('Il match condiviso è incompleto e non può partire.');
+    const playerB = withResolvedVariant(state.me, hostMatch.playerA.variantIndex, { preserveExisting: false });
+    state.me = playerB;
+    saveLocalPlayer(playerB);
+    const sharedMatch = await joinSharedMatch(matchId, { id: playerB.id, name: playerB.name, creatureId: playerB.creatureId, variantIndex: playerB.variantIndex });
     if (!sharedMatch?.playerA || !sharedMatch?.playerB) {
       throw new Error('Il match condiviso è incompleto e non può partire.');
     }
@@ -726,15 +768,16 @@ function queueMatchStart(payload) {
   }, 900);
 }
 function createResolvedMatch(payload) {
-  const playerA = payload.playerA;
-  const playerB = payload.playerB || {
-    id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`),
+  const playerA = withResolvedVariant(payload.playerA);
+  const fallbackPlayerB = {
+    id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`), creatureId: 'goblin',
   };
+  const playerB = withResolvedVariant(payload.playerB || fallbackPlayerB, playerA.variantIndex, { preserveExisting: false });
   return {
     id: payload.id,
     fighters: [
-      { slot: 'A', side: 'left', creatureId: playerA.creatureId || 'goblin', variantIndex: playerA.variantIndex ?? getDeterministicVariantIndex(playerA.id, playerA.creatureId || 'goblin'), variant: PALETTE_VARIANTS[playerA.variantIndex ?? getDeterministicVariantIndex(playerA.id, playerA.creatureId || 'goblin')], ...playerA, hp: 100, state: 'idle' },
-      { slot: 'B', side: 'right', creatureId: playerB.creatureId || 'goblin', variantIndex: playerB.variantIndex ?? getDeterministicVariantIndex(playerB.id, playerB.creatureId || 'goblin'), variant: PALETTE_VARIANTS[playerB.variantIndex ?? getDeterministicVariantIndex(playerB.id, playerB.creatureId || 'goblin')], ...playerB, hp: 100, state: 'idle' },
+      { slot: 'A', side: 'left', ...playerA, hp: 100, state: 'idle' },
+      { slot: 'B', side: 'right', ...playerB, hp: 100, state: 'idle' },
     ],
     turn: 0,
     finished: false,
@@ -803,76 +846,116 @@ function playFighterAnimation(index, animation) {
   state.match.animators[index]?.play(animation);
 }
 async function runMatchAction(action) {
-  if (!state.match || !action) return;
-  const sourceIndex = action.sourceIndex;
-  const targetIndex = action.targetIndex;
-  if (action.animation === 'idle-all') {
-    state.match.animators.forEach((animator) => animator.play('idle'));
-  } else {
-    playFighterAnimation(sourceIndex, action.animation);
-    if (action.targetAnimation) playFighterAnimation(targetIndex, action.targetAnimation);
-  }
-  if (action.sound) sfxManager.play(action.sound);
-  if (action.apply) action.apply();
-  if (action.log) logLine(action.log);
-  updateMatchUI();
-  await wait(action.duration || 0);
+  if (!action) return;
+  return runMatchActionGroup([{ ...action, startAt: 0 }], action.duration || 0);
 }
-function buildTurnActions(attackerIndex, defenderIndex, action) {
+async function runMatchActionGroup(actions, totalDuration) {
+  if (!state.match || !actions?.length) return;
+  const timers = [];
+  const schedule = (fn, delay = 0) => {
+    if (delay <= 0) {
+      fn();
+      return;
+    }
+    timers.push(window.setTimeout(fn, delay));
+  };
+  actions.forEach((action) => {
+    const startAt = Math.max(0, action.startAt || 0);
+    schedule(() => {
+      if (action.animation === 'idle-all') {
+        state.match.animators.forEach((animator) => animator.play('idle'));
+      } else {
+        playFighterAnimation(action.sourceIndex, action.animation);
+        if (action.targetAnimation) playFighterAnimation(action.targetIndex, action.targetAnimation);
+      }
+      updateMatchUI();
+    }, startAt);
+    if (action.sound) {
+      schedule(() => sfxManager.play(action.sound), startAt + (action.soundDelay ?? 0));
+    }
+    if (action.apply) {
+      schedule(() => {
+        action.apply();
+        updateMatchUI();
+      }, startAt + (action.applyDelay ?? 0));
+    }
+    if (action.log) {
+      schedule(() => logLine(action.log), startAt + (action.logDelay ?? 0));
+    }
+  });
+  await wait(totalDuration || 0);
+  timers.forEach((timer) => window.clearTimeout(timer));
+}
+function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
   const attacker = state.match.fighters[attackerIndex];
   const defender = state.match.fighters[defenderIndex];
-  const steps = [{
-    type: 'recharge',
-    sourceIndex: attackerIndex,
-    targetIndex: defenderIndex,
-    animation: 'recharge',
-    sound: 'recharge',
+  const groups = [{
     duration: MATCH_ACTION_TIMINGS.recharge,
+    actions: [{
+      type: 'recharge',
+      sourceIndex: attackerIndex,
+      targetIndex: defenderIndex,
+      animation: 'recharge',
+      sound: 'recharge',
+      soundDelay: MATCH_SOUND_OFFSETS.recharge,
+      duration: MATCH_ACTION_TIMINGS.recharge,
+    }],
   }];
   if (action.type === 'backfire') {
     const nextHp = Math.max(0, attacker.hp - action.amount);
     const reactionType = nextHp <= 0 ? 'defeat' : 'hit';
-    steps.push({
-      type: 'backfire',
-      sourceIndex: attackerIndex,
-      targetIndex: attackerIndex,
-      animation: 'backfire',
-      sound: 'backfire',
-      duration: MATCH_ACTION_TIMINGS.backfire,
-      apply: () => { attacker.hp = nextHp; },
-      log: action.text,
+    const reactionDuration = reactionType === 'defeat' ? MATCH_ACTION_TIMINGS.defeat : MATCH_ACTION_TIMINGS.hit;
+    groups.push({
+      duration: Math.max(MATCH_ACTION_TIMINGS.backfire, MATCH_ACTION_OVERLAP.backfireImpactLeadIn + reactionDuration),
+      actions: [{
+        type: 'backfire',
+        sourceIndex: attackerIndex,
+        targetIndex: attackerIndex,
+        animation: 'backfire',
+        sound: 'backfire',
+        soundDelay: MATCH_SOUND_OFFSETS.backfire,
+        apply: () => { attacker.hp = nextHp; },
+        applyDelay: MATCH_ACTION_OVERLAP.backfireImpactLeadIn,
+        log: action.text,
+        logDelay: MATCH_ACTION_OVERLAP.backfireImpactLeadIn,
+      }, {
+        type: reactionType,
+        sourceIndex: attackerIndex,
+        targetIndex: attackerIndex,
+        animation: reactionType,
+        sound: reactionType,
+        startAt: MATCH_ACTION_OVERLAP.backfireImpactLeadIn,
+        duration: reactionDuration,
+      }],
     });
-    steps.push({
-      type: reactionType,
-      sourceIndex: attackerIndex,
-      targetIndex: attackerIndex,
-      animation: reactionType,
-      sound: reactionType,
-      duration: reactionType === 'defeat' ? MATCH_ACTION_TIMINGS.defeat : MATCH_ACTION_TIMINGS.hit,
-    });
-    return steps;
+    return groups;
   }
   const nextHp = Math.max(0, defender.hp - action.amount);
   const reactionType = nextHp <= 0 ? 'defeat' : 'hit';
-  steps.push({
-    type: 'attack',
-    sourceIndex: attackerIndex,
-    targetIndex: defenderIndex,
-    animation: 'attack',
-    sound: 'attack',
-    duration: MATCH_ACTION_TIMINGS.attack,
+  const reactionDuration = reactionType === 'defeat' ? MATCH_ACTION_TIMINGS.defeat : MATCH_ACTION_TIMINGS.hit;
+  groups.push({
+    duration: Math.max(MATCH_ACTION_TIMINGS.attack, MATCH_ACTION_OVERLAP.attackImpactLeadIn + reactionDuration),
+    actions: [{
+      type: 'attack',
+      sourceIndex: attackerIndex,
+      targetIndex: defenderIndex,
+      animation: 'attack',
+      sound: 'attack',
+      soundDelay: MATCH_SOUND_OFFSETS.attack,
+      duration: MATCH_ACTION_TIMINGS.attack,
+    }, {
+      type: reactionType,
+      sourceIndex: defenderIndex,
+      targetIndex: defenderIndex,
+      animation: reactionType,
+      sound: reactionType,
+      startAt: MATCH_ACTION_OVERLAP.attackImpactLeadIn,
+      duration: reactionDuration,
+      apply: () => { defender.hp = nextHp; },
+      log: action.text,
+    }],
   });
-  steps.push({
-    type: reactionType,
-    sourceIndex: defenderIndex,
-    targetIndex: defenderIndex,
-    animation: reactionType,
-    sound: reactionType,
-    duration: reactionType === 'defeat' ? MATCH_ACTION_TIMINGS.defeat : MATCH_ACTION_TIMINGS.hit,
-    apply: () => { defender.hp = nextHp; },
-    log: action.text,
-  });
-  return steps;
+  return groups;
 }
 async function runMatchSequence() {
   const [a, b] = state.match.fighters;
@@ -885,8 +968,8 @@ async function runMatchSequence() {
     const attacker = state.match.fighters[attackerIndex];
     const defender = state.match.fighters[defenderIndex];
     const turnAction = computeAction(attacker, defender, state.match.turn);
-    for (const action of buildTurnActions(attackerIndex, defenderIndex, turnAction)) {
-      await runMatchAction(action);
+    for (const group of buildTurnActionGroups(attackerIndex, defenderIndex, turnAction)) {
+      await runMatchActionGroup(group.actions, group.duration);
     }
     if (a.hp <= 0 || b.hp <= 0 || state.match.turn >= 12) {
       await finishMatch();
@@ -946,14 +1029,7 @@ function renderHome() {
   return `
     <section class="panel hero">
       <div class="hero-copy">
-        <span class="badge">Goblin only · Lite mode</span>
         <h1>Fart & Furious Lite</h1>
-        <p class="muted">Un solo goblin. Zero schermate inutili. Match automatici, rapidi e puzzolenti.</p>
-        <div class="card-grid">
-          <div class="info-card"><strong>Creatura</strong><br/>Goblin</div>
-          <div class="info-card"><strong>Flow</strong><br/>Home → Crea link → Join → Auto battle</div>
-          <div class="info-card"><strong>Match target</strong><br/>Ritmo crescente sotto ~60 secondi</div>
-        </div>
         ${state.pendingMatch ? `
           <div class="info-card challenge-card">
             <strong>Challenge link pronto</strong>
@@ -971,7 +1047,6 @@ function renderHome() {
       <div class="goblin-preview">
         ${renderAnimatedPreview('home', state.me.variantIndex)}
         <div class="nameplate">${state.me.name}</div>
-        <div class="subtext">La variante colore viene scelta già qui e resta identica anche nel match.</div>
       </div>
     </section>`;
 }
@@ -1021,7 +1096,7 @@ function renderMatchOrPost() {
           <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match automatico'}</h1>
           <p class="muted">Turno ${state.match.turn}. La potenza aumenta ogni round, quindi il caos non dura troppo.</p>
         </div>
-        ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? 'Il perdente resta nella posa di sconfitta finale.' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
+        ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
       </div>
       <div class="arena-shell">
         <section class="arena">
