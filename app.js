@@ -1599,13 +1599,13 @@ function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex
 
 function renderStatusCard(title, body, { showHomeButton = true } = {}) {
   return `
-    <section class="panel status-card world-card">
+    <section class="panel status-card world-card screen-panel">
       <div class="section-heading">
         <span class="section-kicker">Arena sync</span>
         <h1 class="screen-title">${title}</h1>
       </div>
       <p class="muted">${body}</p>
-      ${showHomeButton ? '<div class="footer-actions"><button id="status-home" class="btn-primary">Home</button></div>' : ''}
+      ${showHomeButton ? '<div class="footer-actions"><button id="status-home" class="btn-primary btn-bounce">Home</button></div>' : ''}
     </section>`;
 }
 
@@ -1621,7 +1621,7 @@ function renderHome() {
   ];
   const leaderboardPreview = (state.leaderboard.rating?.length ? state.leaderboard.rating : state.leaderboard.daily).slice(0, 3);
   const challengePanel = isChallengerView ? `
-    <div class="world-card challenge-card challenge-card-active">
+    <div class="world-card challenge-card challenge-card-active card-lift">
       <div class="section-heading compact">
         <span class="section-kicker">Lobby live</span>
         <h3>Challenge link pronto</h3>
@@ -1629,15 +1629,15 @@ function renderHome() {
       <p class="muted">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
       <div class="link-box">
         <code>${state.pendingMatch.link}</code>
-        <button id="copy-link" class="btn-primary">Copia link</button>
+        <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <p class="muted">${challengerStatus}</p>
       <div class="status-chip-row">
-        <span class="status-chip">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
-        <span class="status-chip">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
+        <span class="status-chip chip-bounce">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
+        <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
       </div>
     </div>` : state.pendingMatch ? `
-    <div class="world-card challenge-card">
+    <div class="world-card challenge-card card-lift">
       <div class="section-heading compact">
         <span class="section-kicker">Share challenge</span>
         <h3>Link pronto per lo scontro</h3>
@@ -1645,24 +1645,24 @@ function renderHome() {
       <p class="muted">Crea il match senza lasciare la home, poi manda il link al player B.</p>
       <div class="link-box">
         <code>${state.pendingMatch.link}</code>
-        <button id="copy-link" class="btn-primary">Copia link</button>
+        <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
       <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
     </div>` : `
-    <div class="hero-cta-block">
+    <div class="hero-cta-block cta-alive card-lift">
       <div class="inline-actions hero-actions">
-        <button class="btn-primary hero-cta" id="home-create">Create match</button>
+        <button class="btn-primary hero-cta btn-bounce" id="home-create">Create match</button>
       </div>
       <p class="cta-note">Create a link, send it, fight live. Average match: ~45–60 sec.</p>
       <div class="how-it-works" aria-label="How it works">
-        <div class="flow-chip"><span>1</span>Create match</div>
-        <div class="flow-chip"><span>2</span>Share link</div>
-        <div class="flow-chip"><span>3</span>Fight live</div>
+        <div class="flow-chip chip-bounce"><span>1</span>Create match</div>
+        <div class="flow-chip chip-bounce"><span>2</span>Share link</div>
+        <div class="flow-chip chip-bounce"><span>3</span>Fight live</div>
       </div>
     </div>`;
 
   return `
-    <section class="home-layout">
+    <section class="home-layout screen-panel">
       <section class="panel hero hero-redesign world-card main-showcase" style="--home-world-image:url('${HOME_WORLD_BACKGROUND}')">
         <div class="hero-atmosphere" aria-hidden="true">
           <span class="world-wash"></span>
@@ -1673,30 +1673,30 @@ function renderHome() {
         </div>
         <div class="hero-copy">
           <div class="hero-badges">
-            <span class="badge badge-live">Live arena</span>
-            <span class="badge">2-player chaos</span>
-            <span class="badge">Storybook arcade</span>
+            <span class="badge badge-live chip-bounce">Live arena</span>
+            <span class="badge chip-bounce">2-player chaos</span>
+            <span class="badge chip-bounce">Storybook arcade</span>
           </div>
           <h1>Fast goblin duels in a bright little cartoon world.</h1>
           <p class="hero-lead">The big intro banner is gone, so the main arena hub now carries the mood: playful creature battles, cheerful village energy, and readable chaos in under a minute.</p>
           <div class="hero-meta">
-            <div class="meta-pill"><strong>Avg match</strong><span>45–60 sec</span></div>
-            <div class="meta-pill"><strong>Mode</strong><span>Share link multiplayer</span></div>
-            <div class="meta-pill"><strong>Mood</strong><span>Green cartoon mischief</span></div>
+            <div class="meta-pill card-lift"><strong>Avg match</strong><span>45–60 sec</span></div>
+            <div class="meta-pill card-lift"><strong>Mode</strong><span>Share link multiplayer</span></div>
+            <div class="meta-pill card-lift"><strong>Mood</strong><span>Green cartoon mischief</span></div>
           </div>
           ${challengePanel}
         </div>
-        <aside class="featured-fighter world-card">
+        <aside class="featured-fighter world-card card-lift">
           <div class="section-heading compact">
             <span class="section-kicker">Featured fighter</span>
             <h3>${state.me.name}</h3>
           </div>
-          <div class="fighter-showcase">
+          <div class="fighter-showcase idle-float">
             ${renderAnimatedPreview('home', state.me.variantIndex)}
           </div>
           <div class="fighter-tags">
-            <span class="status-chip">Class · Bog goblin</span>
-            <span class="status-chip">Trait · Chaotic stink</span>
+            <span class="status-chip chip-bounce">Class · Bog goblin</span>
+            <span class="status-chip chip-bounce">Trait · Chaotic stink</span>
           </div>
           <p class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
           ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
@@ -1709,9 +1709,9 @@ function renderHome() {
             <span class="section-kicker">World activity</span>
             <h2 class="section-title">The arena feels alive</h2>
           </div>
-          <div class="activity-list">
+          <div class="activity-list list-stagger">
             ${liveItems.map((item) => `
-              <article class="activity-item">
+              <article class="activity-item card-lift">
                 <div class="activity-value">${item.value}</div>
                 <div>
                   <strong>${item.label}</strong>
@@ -1726,9 +1726,9 @@ function renderHome() {
             <span class="section-kicker">Leaderboard preview</span>
             <h2 class="section-title">Top troublemakers</h2>
           </div>
-          <div class="preview-list">
+          <div class="preview-list list-stagger">
             ${leaderboardPreview.length ? leaderboardPreview.map((row, index) => `
-              <article class="preview-entry">
+              <article class="preview-entry card-lift">
                 <div class="preview-rank">#${index + 1}</div>
                 <div class="preview-main">
                   <strong>${row.name}</strong>
@@ -1738,7 +1738,7 @@ function renderHome() {
               </article>`).join('') : '<div class="leaderboard-empty">Leaderboard pronta a popolarsi dopo i primi match.</div>'}
           </div>
           <div class="footer-actions align-start">
-            <button class="ghost btn-ghost" id="home-leaderboard">Open leaderboard</button>
+            <button class="ghost btn-ghost btn-bounce" id="home-leaderboard">Open leaderboard</button>
           </div>
         </section>
       </section>
@@ -1746,12 +1746,12 @@ function renderHome() {
 }
 function renderCreate() {
   return `
-    <section class="panel">
+    <section class="panel screen-panel">
       <h1 class="screen-title">Crea match</h1>
       <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
       <div class="link-box">
         <code>${state.pendingMatch.link}</code>
-        <button id="copy-link">Copia link</button>
+        <button id="copy-link" class="btn-bounce">Copia link</button>
       </div>
       <p class="muted">Questa schermata controlla il match condiviso ogni pochi secondi. Quando il player B entra, il match parte automaticamente anche qui senza refresh.</p>
       <div class="goblin-preview" style="margin-top:18px;">
@@ -1820,14 +1820,14 @@ function hydrateMatchFromSharedState(sharedMatch) {
 function renderJoin() {
   const playerB = state.pendingMatch.payload.playerB;
   return `
-    <section class="panel hero hero-redesign world-card join-screen">
+    <section class="panel hero hero-redesign world-card join-screen screen-panel">
       <div>
         <div class="section-heading compact">
           <span class="section-kicker">Lobby accepted</span>
           <h1 class="screen-title">Avversario trovato</h1>
         </div>
         <p class="muted">Sei il player B. I goblin stanno entrando nell’arena…</p>
-        <div class="info-card world-card">
+        <div class="info-card world-card card-lift">
           <strong>Host</strong><br/>${state.pendingMatch.payload.playerA.name}
         </div>
       </div>
@@ -1844,7 +1844,7 @@ function renderMatchOrPost() {
     ? `${state.match.winner.name} wins!`
     : 'Draw!';
   return `
-    <section class="panel match-layout world-card">
+    <section class="panel match-layout world-card screen-panel">
       <div class="match-head">
         <div class="match-meta">
           <div class="section-heading compact">
@@ -1852,8 +1852,8 @@ function renderMatchOrPost() {
             <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match'}</h1>
           </div>
           <div class="match-status-cluster">
-            <span class="status-chip" data-turn-counter>Turno ${state.match.turn}</span>
-            <span class="status-chip">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
+            <span class="status-chip chip-bounce" data-turn-counter>Turno ${state.match.turn}</span>
+            <span class="status-chip chip-bounce">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
           </div>
         </div>
         ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
@@ -1890,11 +1890,11 @@ function renderMatchOrPost() {
             <p class="log-heading">Battle log</p>
             <span class="status-chip">Live feed</span>
           </div>
-          <div id="log-lines">
+          <div id="log-lines" class="list-stagger">
             ${state.logs.map((line, index) => `<p class="log-line"><span class="log-index">0${index + 1}</span>${line}</p>`).join('')}
           </div>
         </div>
-        ${isPost ? `<div class="footer-actions"><button id="post-home" class="btn-primary">Home</button><button class="ghost btn-ghost" id="post-leaderboard">Leaderboard</button></div>` : ''}
+        ${isPost ? `<div class="footer-actions"><button id="post-home" class="btn-primary btn-bounce">Home</button><button class="ghost btn-ghost btn-bounce" id="post-leaderboard">Leaderboard</button></div>` : ''}
       </div>
     </section>`;
 }
@@ -1906,7 +1906,7 @@ function renderLeaderboardRows(rows, type) {
     const primaryValue = type === 'rating'
       ? `<div class="leaderboard-score">${row.rating}<span>rating</span></div>`
       : `<div class="leaderboard-score">${row.wins}<span>wins</span></div>`;
-    return `<article class="leaderboard-entry ${isTopThree ? `podium podium-${rank}` : ''}">
+    return `<article class="leaderboard-entry card-lift ${isTopThree ? `podium podium-${rank}` : ''}">
       <div class="leaderboard-rank-wrap">
         <div class="leaderboard-rank">#${rank}</div>
         ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
@@ -1927,7 +1927,7 @@ function renderLeaderboardSection(title, description, rows, status, type) {
     : status === 'error'
       ? 'Impossibile caricare questa classifica.'
       : 'Nessun risultato disponibile.';
-  return `<section class="leaderboard-section leaderboard-section-${type} world-card">
+  return `<section class="leaderboard-section leaderboard-section-${type} world-card card-lift">
     <div class="leaderboard-section-head">
       <div>
         <p class="leaderboard-kicker">${type === 'daily' ? 'Daily board' : 'Global ladder'}</p>
@@ -1935,14 +1935,14 @@ function renderLeaderboardSection(title, description, rows, status, type) {
       </div>
       <p class="muted">${description}</p>
     </div>
-    <div class="leaderboard-list">
+    <div class="leaderboard-list list-stagger">
       ${rows.length ? renderLeaderboardRows(rows, type) : `<div class="leaderboard-empty">${message}</div>`}
     </div>
   </section>`;
 }
 function renderLeaderboard() {
   return `
-    <section class="panel leaderboard-layout world-card">
+    <section class="panel leaderboard-layout world-card screen-panel">
       <div class="leaderboard-header">
         <div class="section-heading">
           <span class="section-kicker">Hall of troublemakers</span>
@@ -1950,8 +1950,8 @@ function renderLeaderboard() {
           <p class="muted">Progressi giornalieri separati dalla classifica Elo globale.</p>
         </div>
         <div class="leaderboard-top-meta">
-          <div class="badge badge-live">UTC daily bucket</div>
-          <div class="badge">Live sync</div>
+          <div class="badge badge-live chip-bounce">UTC daily bucket</div>
+          <div class="badge chip-bounce">Live sync</div>
         </div>
       </div>
       <div class="leaderboard-columns">
@@ -1976,12 +1976,12 @@ function render() {
           </div>
         </div>
         <div class="topbar-nav">
-          <button class="nav-pill ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button>
-          ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="nav-pill nav-pill-accent" id="nav-create">Crea nuovo match</button>'}
-          <button class="nav-pill ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button>
+          <button class="nav-pill btn-bounce ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button>
+          ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="nav-pill nav-pill-accent btn-bounce" id="nav-create">Crea nuovo match</button>'}
+          <button class="nav-pill btn-bounce ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button>
         </div>
         <div class="audio-controls" aria-label="Audio controls">
-          <button class="ghost audio-toggle nav-pill" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
+          <button class="ghost audio-toggle nav-pill btn-bounce" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
           <label class="audio-slider-wrap" for="audio-volume">
             <span>Vol</span>
             <input id="audio-volume" type="range" min="0" max="100" value="${Math.round(audioManager.preferences.volume * 100)}" />
