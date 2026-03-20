@@ -563,6 +563,24 @@ button:disabled { opacity: 0.6; cursor: default; }
   margin-top: 6px;
   display: grid;
   gap: 14px;
+  align-items: stretch;
+  justify-items: stretch;
+}
+.challenge-card > * {
+  width: 100%;
+}
+.challenge-card .section-heading,
+.challenge-card .share-link-row,
+.challenge-card .status-chip-row,
+.challenge-card .copy-feedback,
+.challenge-card-text {
+  width: 100%;
+}
+.challenge-card .section-heading {
+  align-items: start;
+}
+.challenge-card .status-chip-row {
+  justify-content: flex-start;
 }
 .challenge-card-text {
   margin: 0;
@@ -1239,7 +1257,6 @@ button:disabled { opacity: 0.6; cursor: default; }
 .section-heading,
 .leaderboard-section-head,
 .status-card,
-.challenge-card,
 .log-head-row,
 .leaderboard-header,
 .match-status-cluster,
