@@ -112,6 +112,14 @@ a { color: #fde68a; }
   border: 1px solid rgba(255,255,255,0.1);
 }
 
+.challenge-card {
+  margin-top: 16px;
+}
+
+.challenge-card .link-box {
+  margin: 12px 0;
+}
+
 .goblin-preview, .fighter {
   display: grid;
   gap: 14px;

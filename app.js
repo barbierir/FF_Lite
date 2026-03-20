@@ -1,6 +1,6 @@
 const STORAGE_KEYS = {
   leaderboard: 'ff-lite-leaderboard',
-  playerName: 'ff-lite-player-name',
+  playerProfile: 'ff-lite-player-profile',
 };
 
 const SPRITES = {
@@ -52,6 +52,18 @@ const PALETTE_VARIANTS = [
   { hue: -45, sat: 1.1, bright: 0.9 },
   { hue: 90, sat: 1.2, bright: 1 },
 ];
+
+const MATCH_ACTION_TIMINGS = {
+  intro: 450,
+  recharge: 520,
+  attack: 460,
+  hit: 420,
+  backfire: 520,
+  defeat: 780,
+  idle: 250,
+  victory: 900,
+  draw: 700,
+};
 
 const state = {
   screen: 'home',
@@ -188,10 +200,6 @@ function hashString(str) {
   }
   return h >>> 0;
 }
-function getVariant(matchId, playerId, creatureId) {
-  const seed = `${matchId}:${playerId}:${creatureId}`;
-  return PALETTE_VARIANTS[hashString(seed) % PALETTE_VARIANTS.length];
-}
 function rgbToHsl(r, g, b) {
   r /= 255;
   g /= 255;
@@ -268,10 +276,43 @@ function generateFunnyName(seed = crypto.randomUUID()) {
   const suffix = pickDeterministic(NAME_SUFFIXES, `${seed}:s`);
   return `${prefix}${suffix}`;
 }
+function getStoredPlayerProfile() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.playerProfile) || 'null');
+  } catch {
+    return null;
+  }
+}
+function getDeterministicVariantIndex(playerId, creatureId = 'goblin') {
+  return hashString(`${playerId}:${creatureId}`) % PALETTE_VARIANTS.length;
+}
+function buildPlayerProfile(profile = {}) {
+  const creatureId = profile.creatureId || 'goblin';
+  const id = profile.id || crypto.randomUUID();
+  const variantIndex = Number.isInteger(profile.variantIndex)
+    ? profile.variantIndex
+    : getDeterministicVariantIndex(id, creatureId);
+  return {
+    id,
+    name: profile.name || generateFunnyName(id),
+    creatureId,
+    variantIndex,
+    variant: PALETTE_VARIANTS[variantIndex],
+  };
+}
+function saveLocalPlayer(player = state.me) {
+  localStorage.setItem(STORAGE_KEYS.playerProfile, JSON.stringify({
+    id: player.id,
+    name: player.name,
+    creatureId: player.creatureId,
+    variantIndex: player.variantIndex,
+  }));
+}
 function loadLocalPlayer() {
-  const name = localStorage.getItem(STORAGE_KEYS.playerName) || generateFunnyName();
-  localStorage.setItem(STORAGE_KEYS.playerName, name);
-  return { id: crypto.randomUUID(), name };
+  const stored = getStoredPlayerProfile();
+  const player = buildPlayerProfile(stored || {});
+  saveLocalPlayer(player);
+  return player;
 }
 function loadLeaderboard() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.leaderboard) || '[]'); }
@@ -567,7 +608,7 @@ function setPendingMatchState(nextPendingMatch) {
     return;
   }
   watchSharedMatch(matchId, (sharedMatch) => {
-    if (!sharedMatch || state.screen !== 'create') return;
+    if (!sharedMatch || (state.screen !== 'home' && state.screen !== 'create')) return;
     if (sharedMatch.status === 'active' && sharedMatch.playerB) {
       const nextPayload = {
         ...state.pendingMatch.payload,
@@ -602,7 +643,7 @@ function makeMatchPayload(playerA = state.me) {
     id: matchId,
     createdAt: new Date().toISOString(),
     status: 'waiting',
-    playerA: { id: playerA.id, name: playerA.name },
+    playerA: { id: playerA.id, name: playerA.name, creatureId: playerA.creatureId, variantIndex: playerA.variantIndex },
     playerB: null,
     sharedState: {},
   };
@@ -638,7 +679,7 @@ async function startCreateFlow() {
     const payload = makeMatchPayload();
     const sharedMatch = await createSharedMatch(payload);
     setPendingMatchState({ payload: sharedMatch, link: getJoinLink(sharedMatch.id), opponentJoined: false });
-    state.screen = 'create';
+    state.screen = 'home';
     state.loading = false;
     bgmManager.sync();
     render();
@@ -652,7 +693,7 @@ async function startJoinedFlow(matchId) {
   state.errorMessage = '';
   render();
   try {
-    const sharedMatch = await joinSharedMatch(matchId, { id: state.me.id, name: state.me.name });
+    const sharedMatch = await joinSharedMatch(matchId, { id: state.me.id, name: state.me.name, creatureId: state.me.creatureId, variantIndex: state.me.variantIndex });
     if (!sharedMatch?.playerA || !sharedMatch?.playerB) {
       throw new Error('Il match condiviso è incompleto e non può partire.');
     }
@@ -692,8 +733,8 @@ function createResolvedMatch(payload) {
   return {
     id: payload.id,
     fighters: [
-      { slot: 'A', side: 'left', creatureId: 'goblin', variant: getVariant(payload.id, playerA.id, 'goblin'), ...playerA, hp: 100, state: 'idle' },
-      { slot: 'B', side: 'right', creatureId: 'goblin', variant: getVariant(payload.id, playerB.id, 'goblin'), ...playerB, hp: 100, state: 'idle' },
+      { slot: 'A', side: 'left', creatureId: playerA.creatureId || 'goblin', variantIndex: playerA.variantIndex ?? getDeterministicVariantIndex(playerA.id, playerA.creatureId || 'goblin'), variant: PALETTE_VARIANTS[playerA.variantIndex ?? getDeterministicVariantIndex(playerA.id, playerA.creatureId || 'goblin')], ...playerA, hp: 100, state: 'idle' },
+      { slot: 'B', side: 'right', creatureId: playerB.creatureId || 'goblin', variantIndex: playerB.variantIndex ?? getDeterministicVariantIndex(playerB.id, playerB.creatureId || 'goblin'), variant: PALETTE_VARIANTS[playerB.variantIndex ?? getDeterministicVariantIndex(playerB.id, playerB.creatureId || 'goblin')], ...playerB, hp: 100, state: 'idle' },
     ],
     turn: 0,
     finished: false,
@@ -754,81 +795,139 @@ async function syncSharedMatchResult() {
     console.error('Failed to persist final match state', error);
   }
 }
-async function playState(index, stateName, soundName = stateName) {
-  const animator = state.match.animators[index];
-  return new Promise((resolve) => {
-    sfxManager.play(soundName);
-    animator.play(stateName, resolve);
-    if (ANIMATION_CONFIG[stateName].loop) {
-      window.setTimeout(resolve, 600);
-    }
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+function playFighterAnimation(index, animation) {
+  if (index == null || !animation) return;
+  state.match.animators[index]?.play(animation);
+}
+async function runMatchAction(action) {
+  if (!state.match || !action) return;
+  const sourceIndex = action.sourceIndex;
+  const targetIndex = action.targetIndex;
+  if (action.animation === 'idle-all') {
+    state.match.animators.forEach((animator) => animator.play('idle'));
+  } else {
+    playFighterAnimation(sourceIndex, action.animation);
+    if (action.targetAnimation) playFighterAnimation(targetIndex, action.targetAnimation);
+  }
+  if (action.sound) sfxManager.play(action.sound);
+  if (action.apply) action.apply();
+  if (action.log) logLine(action.log);
+  updateMatchUI();
+  await wait(action.duration || 0);
+}
+function buildTurnActions(attackerIndex, defenderIndex, action) {
+  const attacker = state.match.fighters[attackerIndex];
+  const defender = state.match.fighters[defenderIndex];
+  const steps = [{
+    type: 'recharge',
+    sourceIndex: attackerIndex,
+    targetIndex: defenderIndex,
+    animation: 'recharge',
+    sound: 'recharge',
+    duration: MATCH_ACTION_TIMINGS.recharge,
+  }];
+  if (action.type === 'backfire') {
+    const nextHp = Math.max(0, attacker.hp - action.amount);
+    const reactionType = nextHp <= 0 ? 'defeat' : 'hit';
+    steps.push({
+      type: 'backfire',
+      sourceIndex: attackerIndex,
+      targetIndex: attackerIndex,
+      animation: 'backfire',
+      sound: 'backfire',
+      duration: MATCH_ACTION_TIMINGS.backfire,
+      apply: () => { attacker.hp = nextHp; },
+      log: action.text,
+    });
+    steps.push({
+      type: reactionType,
+      sourceIndex: attackerIndex,
+      targetIndex: attackerIndex,
+      animation: reactionType,
+      sound: reactionType,
+      duration: reactionType === 'defeat' ? MATCH_ACTION_TIMINGS.defeat : MATCH_ACTION_TIMINGS.hit,
+    });
+    return steps;
+  }
+  const nextHp = Math.max(0, defender.hp - action.amount);
+  const reactionType = nextHp <= 0 ? 'defeat' : 'hit';
+  steps.push({
+    type: 'attack',
+    sourceIndex: attackerIndex,
+    targetIndex: defenderIndex,
+    animation: 'attack',
+    sound: 'attack',
+    duration: MATCH_ACTION_TIMINGS.attack,
   });
+  steps.push({
+    type: reactionType,
+    sourceIndex: defenderIndex,
+    targetIndex: defenderIndex,
+    animation: reactionType,
+    sound: reactionType,
+    duration: reactionType === 'defeat' ? MATCH_ACTION_TIMINGS.defeat : MATCH_ACTION_TIMINGS.hit,
+    apply: () => { defender.hp = nextHp; },
+    log: action.text,
+  });
+  return steps;
 }
 async function runMatchSequence() {
   const [a, b] = state.match.fighters;
   bgmManager.sync();
-  sfxManager.play('matchStart');
-  for (const animator of state.match.animators) animator.play('idle');
+  await runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'matchStart', duration: MATCH_ACTION_TIMINGS.intro });
   while (!state.match.finished) {
     state.match.turn += 1;
     const attackerIndex = state.match.turn % 2 === 1 ? 0 : 1;
     const defenderIndex = attackerIndex === 0 ? 1 : 0;
     const attacker = state.match.fighters[attackerIndex];
     const defender = state.match.fighters[defenderIndex];
-    const action = computeAction(attacker, defender, state.match.turn);
-    await playState(attackerIndex, 'recharge');
-    if (action.type === 'backfire') {
-      await playState(attackerIndex, 'backfire');
-      attacker.hp = Math.max(0, attacker.hp - action.amount);
-      updateMatchUI();
-      logLine(action.text);
-      await playState(attackerIndex, attacker.hp <= 0 ? 'defeat' : 'hit', attacker.hp <= 0 ? 'defeat' : 'hit');
-    } else {
-      await playState(attackerIndex, 'attack');
-      defender.hp = Math.max(0, defender.hp - action.amount);
-      updateMatchUI();
-      logLine(action.text);
-      await playState(defenderIndex, defender.hp <= 0 ? 'defeat' : 'hit', defender.hp <= 0 ? 'defeat' : 'hit');
+    const turnAction = computeAction(attacker, defender, state.match.turn);
+    for (const action of buildTurnActions(attackerIndex, defenderIndex, turnAction)) {
+      await runMatchAction(action);
     }
-    updateMatchUI();
     if (a.hp <= 0 || b.hp <= 0 || state.match.turn >= 12) {
-      finishMatch();
+      await finishMatch();
       return;
     }
-    state.match.animators[0].play('idle');
-    state.match.animators[1].play('idle');
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await runMatchAction({ type: 'idle', animation: 'idle-all', duration: MATCH_ACTION_TIMINGS.idle });
   }
 }
-function finishMatch() {
+async function finishMatch() {
   const [a, b] = state.match.fighters;
   state.match.finished = true;
-  sfxManager.play('matchEnd');
   if (a.hp === b.hp) {
     state.match.winner = null;
     updateLeaderboardForResult(null, null, true);
-    state.match.animators[0].play('idle');
-    state.match.animators[1].play('idle');
-    logLine('Pareggio tossico: nessuno crolla davvero.');
+    await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'matchEnd', duration: MATCH_ACTION_TIMINGS.draw, log: 'Pareggio tossico: nessuno crolla davvero.' });
   } else {
     const winner = a.hp > b.hp ? a : b;
     const loser = winner === a ? b : a;
     state.match.winner = winner;
-    state.match.animators[winner === a ? 0 : 1].play('victory');
-    state.match.animators[winner === a ? 1 : 0].play('defeat');
+    await runMatchAction({
+      type: 'finish',
+      sourceIndex: winner === a ? 0 : 1,
+      targetIndex: winner === a ? 1 : 0,
+      animation: 'victory',
+      targetAnimation: 'defeat',
+      sound: 'matchEnd',
+      duration: MATCH_ACTION_TIMINGS.victory,
+      log: `${winner.name} trionfa nella nebbia verdognola.`,
+    });
     sfxManager.play('victory');
     sfxManager.play('defeat');
     updateLeaderboardForResult(winner, loser, false);
-    logLine(`${winner.name} trionfa nella nebbia verdognola.`);
   }
   state.screen = 'postmatch';
   render();
   syncSharedMatchResult();
 }
 
-function renderAnimatedPreview(label = '') {
+function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex) {
   return `
-    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}">
+    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}">
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
@@ -852,14 +951,27 @@ function renderHome() {
         <p class="muted">Un solo goblin. Zero schermate inutili. Match automatici, rapidi e puzzolenti.</p>
         <div class="card-grid">
           <div class="info-card"><strong>Creatura</strong><br/>Goblin</div>
-          <div class="info-card"><strong>Flow</strong><br/>Home → Crea match → Join → Auto battle</div>
+          <div class="info-card"><strong>Flow</strong><br/>Home → Crea link → Join → Auto battle</div>
           <div class="info-card"><strong>Match target</strong><br/>Ritmo crescente sotto ~60 secondi</div>
         </div>
+        ${state.pendingMatch ? `
+          <div class="info-card challenge-card">
+            <strong>Challenge link pronto</strong>
+            <p class="muted">Crea il match condiviso senza lasciare la home, poi copia il link per il player B.</p>
+            <div class="link-box">
+              <code>${state.pendingMatch.link}</code>
+              <button id="copy-link">Copia link</button>
+            </div>
+            <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
+          </div>` : `
+          <div class="inline-actions">
+            <button class="secondary" id="home-create">Crea challenge link</button>
+          </div>`}
       </div>
       <div class="goblin-preview">
-        ${renderAnimatedPreview('home')}
+        ${renderAnimatedPreview('home', state.me.variantIndex)}
         <div class="nameplate">${state.me.name}</div>
-        <div class="subtext">Sprite originale del goblin senza variazioni colore.</div>
+        <div class="subtext">La variante colore viene scelta già qui e resta identica anche nel match.</div>
       </div>
     </section>`;
 }
@@ -874,7 +986,7 @@ function renderCreate() {
       </div>
       <p class="muted">Questa schermata controlla il match condiviso ogni pochi secondi. Quando il player B entra, il match parte automaticamente anche qui senza refresh.</p>
       <div class="goblin-preview" style="margin-top:18px;">
-        ${renderAnimatedPreview('create')}
+        ${renderAnimatedPreview('create', state.pendingMatch.payload.playerA.variantIndex)}
         <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
       </div>
     </section>`;
@@ -891,7 +1003,7 @@ function renderJoin() {
         </div>
       </div>
       <div class="goblin-preview">
-        ${renderAnimatedPreview('join')}
+        ${renderAnimatedPreview('join', playerB.variantIndex)}
         <div class="nameplate">${playerB.name}</div>
         <div class="subtext">Preparati: il match parte da solo fra un attimo.</div>
       </div>
@@ -982,6 +1094,7 @@ function render() {
   document.getElementById('nav-home')?.addEventListener('click', resetToHome);
   document.getElementById('status-home')?.addEventListener('click', resetToHome);
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
+  document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     try {
@@ -995,7 +1108,10 @@ function render() {
   document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
-    const animator = new SpriteSheetAnimator(node);
+    const variantIndex = Number(node.dataset.variantIndex);
+    const animator = new SpriteSheetAnimator(node, {
+      variant: Number.isInteger(variantIndex) ? PALETTE_VARIANTS[variantIndex] : null,
+    });
     state.previewAnimators.push(animator);
     animator.playSheet(HOME_ANIMATION);
   });
