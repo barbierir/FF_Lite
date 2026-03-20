@@ -3,14 +3,25 @@ const STORAGE_KEYS = {
   audioPreferences: 'ff-lite-audio-preferences',
 };
 
-const SPRITES = {
-  idle: 'assets/goblin/idle.png',
-  recharge: 'assets/goblin/charge.png',
-  attack: 'assets/goblin/attack.png',
-  backfire: 'assets/goblin/backfire.png',
-  hit: 'assets/goblin/hit.png',
-  victory: 'assets/goblin/victory.png',
-  defeat: 'assets/goblin/defeat.png',
+const ACTION_ASSET_BASE_NAMES = {
+  idle: 'idle',
+  recharge: 'charge',
+  charge: 'charge',
+  attack: 'attack',
+  backfire: 'backfire',
+  hit: 'hit',
+  victory: 'victory',
+  defeat: 'defeat',
+};
+const ACTION_VARIANT_COUNTS = {
+  idle: 4,
+  recharge: 4,
+  charge: 4,
+  attack: 4,
+  backfire: 4,
+  hit: 4,
+  victory: 2,
+  defeat: 2,
 };
 const HOME_IMAGE = 'assets/goblin/idle_choose.png';
 const HOME_ANIMATION = { src: HOME_IMAGE, rows: 4, cols: 4, loop: true, frameDuration: 150 };
@@ -101,6 +112,79 @@ const state = {
   booting: false,
   errorMessage: '',
 };
+
+function normalizeAnimationAction(action) {
+  return ACTION_ASSET_BASE_NAMES[action] ? action : 'idle';
+}
+function getVariantCount(action) {
+  return ACTION_VARIANT_COUNTS[normalizeAnimationAction(action)] || ACTION_VARIANT_COUNTS.idle;
+}
+function pickRandomVariant(action, lastVariant) {
+  const count = getVariantCount(action);
+  if (count <= 1) return 1;
+  let variant = 1;
+  do {
+    variant = randomInt(1, count);
+  } while (variant === lastVariant);
+  return variant;
+}
+function getActionAsset(action, variant) {
+  const normalizedAction = normalizeAnimationAction(action);
+  const assetBase = ACTION_ASSET_BASE_NAMES[normalizedAction] || ACTION_ASSET_BASE_NAMES.idle;
+  const count = getVariantCount(normalizedAction);
+  const safeVariant = Number.isInteger(variant) && variant >= 1 && variant <= count ? variant : 1;
+  return `assets/goblin/${assetBase}${safeVariant}.png`;
+}
+function getActionFallbackAsset(action) {
+  const normalizedAction = normalizeAnimationAction(action);
+  return ACTION_ASSET_BASE_NAMES[normalizedAction] ? getActionAsset(normalizedAction, 1) : getActionAsset('idle', 1);
+}
+function getAllBattleActionAssets() {
+  const assets = new Set();
+  Object.keys(ACTION_VARIANT_COUNTS).forEach((action) => {
+    for (let variant = 1; variant <= getVariantCount(action); variant += 1) {
+      assets.add(getActionAsset(action, variant));
+    }
+  });
+  return [...assets];
+}
+function createAnimationState(currentAction = 'idle') {
+  return {
+    currentAction: null,
+    currentVariant: null,
+    currentAsset: getActionAsset(currentAction, 1),
+    lastVariant: {},
+  };
+}
+function selectCreatureAnimationVariant(fighter, action, { reroll = true } = {}) {
+  if (!fighter) return { action: 'idle', variant: 1, asset: getActionAsset('idle', 1) };
+  const normalizedAction = normalizeAnimationAction(action);
+  fighter.animationState ||= createAnimationState(normalizedAction);
+  const currentVariant = fighter.animationState.currentVariant;
+  if (!reroll && fighter.animationState.currentAction === normalizedAction && currentVariant) {
+    return {
+      action: normalizedAction,
+      variant: currentVariant,
+      asset: fighter.animationState.currentAsset || getActionAsset(normalizedAction, currentVariant),
+    };
+  }
+  const lastVariant = fighter.animationState.lastVariant?.[normalizedAction];
+  const variant = pickRandomVariant(normalizedAction, lastVariant);
+  const asset = getActionAsset(normalizedAction, variant);
+  fighter.animationState.currentAction = normalizedAction;
+  fighter.animationState.currentVariant = variant;
+  fighter.animationState.currentAsset = asset;
+  fighter.animationState.lastVariant = {
+    ...(fighter.animationState.lastVariant || {}),
+    [normalizedAction]: variant,
+  };
+  return { action: normalizedAction, variant, asset };
+}
+function preloadBattleAnimationAssets() {
+  getAllBattleActionAssets().forEach((src) => {
+    SpriteSheetAnimator.preloadImage(src);
+  });
+}
 
 function loadAudioPreferences() {
   try {
@@ -257,6 +341,11 @@ class AudioManager {
 
 const audioManager = new AudioManager(AUDIO_CONFIG, loadAudioPreferences());
 
+function randomInt(min, max) {
+  const lower = Math.ceil(Math.min(min, max));
+  const upper = Math.floor(Math.max(min, max));
+  return Math.floor(Math.random() * (upper - lower + 1)) + lower;
+}
 function hashString(str) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -647,7 +736,6 @@ class SpriteSheetAnimator {
     this.timer = null;
     this.ended = null;
     this.image = null;
-    this.imageCache = new Map();
     this.flip = opts.flip ?? 1;
     this.frameWidth = 0;
     this.frameHeight = 0;
@@ -662,13 +750,26 @@ class SpriteSheetAnimator {
     this.host.style.setProperty('--flip', String(flip));
     if (this.current && this.image) this.drawFrame();
   }
-  play(stateName, onEnd) {
+  static imageCache = new Map();
+  static preloadImage(src) {
+    if (!src) return null;
+    const cached = SpriteSheetAnimator.imageCache.get(src);
+    if (cached) return cached;
+    const img = new Image();
+    img.src = src;
+    SpriteSheetAnimator.imageCache.set(src, img);
+    return img;
+  }
+  play(stateName, onEnd, opts = {}) {
+    const normalizedAction = normalizeAnimationAction(stateName);
+    const variant = Number.isInteger(opts.variant) ? opts.variant : 1;
     return this.playSheet({
-      stateName,
-      src: SPRITES[stateName],
+      stateName: normalizedAction,
+      src: opts.src || getActionAsset(normalizedAction, variant),
+      fallbackSrc: opts.fallbackSrc || getActionFallbackAsset(normalizedAction),
       rows: this.rows,
       cols: this.cols,
-      ...ANIMATION_CONFIG[stateName],
+      ...ANIMATION_CONFIG[normalizedAction],
     }, onEnd);
   }
   playSheet(sheet, onEnd) {
@@ -680,6 +781,8 @@ class SpriteSheetAnimator {
         frameDuration: sheet.frameDuration || ANIMATION_CONFIG.idle.frameDuration,
         freezeLastFrame: Boolean(sheet.freezeLastFrame),
       },
+      fallbackSrc: sheet.fallbackSrc || getActionFallbackAsset(sheet.stateName),
+      usingFallback: false,
     };
     this.rows = sheet.rows || 4;
     this.cols = sheet.cols || 4;
@@ -690,7 +793,7 @@ class SpriteSheetAnimator {
     this.preloadAndStart();
   }
   preloadAndStart() {
-    const cached = this.imageCache.get(this.current.src);
+    const cached = SpriteSheetAnimator.imageCache.get(this.current.src);
     if (cached?.complete) {
       this.handleImageLoad(cached);
       return;
@@ -698,14 +801,20 @@ class SpriteSheetAnimator {
     const img = cached || new Image();
     img.onload = () => this.handleImageLoad(img);
     img.onerror = () => {
-      this.imageCache.delete(this.current.src);
+      SpriteSheetAnimator.imageCache.delete(this.current.src);
+      if (!this.current.usingFallback && this.current.fallbackSrc && this.current.src !== this.current.fallbackSrc) {
+        this.current.src = this.current.fallbackSrc;
+        this.current.usingFallback = true;
+        this.preloadAndStart();
+        return;
+      }
       this.image = null;
       if (this.canvas) this.canvas.hidden = true;
       this.fallback.hidden = false;
       this.fallback.textContent = `Missing sprite sheet:\n${this.current.src}`;
       if (!this.current.config.loop && this.ended) this.ended();
     };
-    this.imageCache.set(this.current.src, img);
+    SpriteSheetAnimator.imageCache.set(this.current.src, img);
     if (!img.src) img.src = this.current.src;
   }
   handleImageLoad(img) {
@@ -1111,8 +1220,8 @@ function createResolvedMatch(payload) {
     id: payload.id,
     sharedState,
     fighters: [
-      { slot: 'A', side: 'left', ...playerA, hp: Number(sharedPlayerA?.hp ?? 100), state: sharedPlayerA?.state || 'idle' },
-      { slot: 'B', side: 'right', ...playerB, hp: Number(sharedPlayerB?.hp ?? 100), state: sharedPlayerB?.state || 'idle' },
+      { slot: 'A', side: 'left', ...playerA, hp: Number(sharedPlayerA?.hp ?? 100), state: sharedPlayerA?.state || 'idle', animationState: createAnimationState(sharedPlayerA?.state || 'idle') },
+      { slot: 'B', side: 'right', ...playerB, hp: Number(sharedPlayerB?.hp ?? 100), state: sharedPlayerB?.state || 'idle', animationState: createAnimationState(sharedPlayerB?.state || 'idle') },
     ],
     turn: Number(sharedState.turn || 0),
     finished: payload.status === 'finished',
@@ -1262,8 +1371,15 @@ function setFighterState(index, animation) {
 }
 function playFighterAnimation(index, animation) {
   if (!state.match || index == null || !animation) return;
+  const fighter = state.match.fighters[index];
+  if (!fighter) return;
   setFighterState(index, animation);
-  state.match.animators?.[index]?.play(animation);
+  const selection = selectCreatureAnimationVariant(fighter, animation, { reroll: true });
+  state.match.animators?.[index]?.play(selection.action, undefined, {
+    variant: selection.variant,
+    src: selection.asset,
+    fallbackSrc: getActionFallbackAsset(selection.action),
+  });
 }
 function setAllFighterStates(animation) {
   if (!state.match || !animation) return;
@@ -1272,9 +1388,15 @@ function setAllFighterStates(animation) {
 function restoreMatchAnimators({ force = false } = {}) {
   if (!state.match?.animators?.length) return;
   state.match.animators.forEach((animator, index) => {
-    const fighterState = state.match.fighters[index]?.state || 'idle';
-    if (!force && animator.current?.stateName === fighterState) return;
-    animator.play(fighterState);
+    const fighter = state.match.fighters[index];
+    const fighterState = fighter?.state || 'idle';
+    const selection = selectCreatureAnimationVariant(fighter, fighterState, { reroll: false });
+    if (!force && animator.current?.stateName === fighterState && animator.current?.src === selection.asset) return;
+    animator.play(selection.action, undefined, {
+      variant: selection.variant,
+      src: selection.asset,
+      fallbackSrc: getActionFallbackAsset(selection.action),
+    });
   });
 }
 async function runMatchAction(action) {
@@ -1296,7 +1418,7 @@ async function runMatchActionGroup(actions, totalDuration) {
     schedule(() => {
       if (action.animation === 'idle-all') {
         setAllFighterStates('idle');
-        state.match.animators.forEach((animator) => animator.play('idle'));
+        state.match.fighters.forEach((_, index) => playFighterAnimation(index, 'idle'));
       } else {
         playFighterAnimation(action.sourceIndex, action.animation);
         if (action.targetAnimation) playFighterAnimation(action.targetIndex, action.targetAnimation);
@@ -1576,6 +1698,7 @@ function hydrateMatchFromSharedState(sharedMatch) {
       ...fighter,
       hp: Number.isFinite(sharedHp) ? Math.min(fighter.hp, sharedHp) : fighter.hp,
       state: sharedAnimationState || fighter.state || 'idle',
+      animationState: fighter.animationState || createAnimationState(sharedAnimationState || fighter.state || 'idle'),
     };
   });
   if (progress.winner) state.match.winner = progress.winner;
@@ -1784,6 +1907,7 @@ function render() {
     const nodes = [...document.querySelectorAll('[data-animator]')];
     const previous = state.match.animators || [];
     const canReuse = previous.length === nodes.length;
+    preloadBattleAnimationAssets();
     state.match.animators = nodes.map((node, index) => {
       const existing = canReuse ? previous[index] : null;
       if (existing) {

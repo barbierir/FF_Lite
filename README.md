@@ -151,13 +151,13 @@ The Lite flow now stores match state in Supabase and polls the shared record whi
 Populate these files with the real Goblin art if they are not already present:
 
 - `assets/goblin/idle_choose.png`
-- `assets/goblin/idle.png`
-- `assets/goblin/charge.png`
-- `assets/goblin/attack.png`
-- `assets/goblin/backfire.png`
-- `assets/goblin/hit.png`
-- `assets/goblin/victory.png`
-- `assets/goblin/defeat.png`
+- `assets/goblin/idle1.png`, `idle2.png`, `idle3.png`, `idle4.png`
+- `assets/goblin/charge1.png`, `charge2.png`, `charge3.png`, `charge4.png`
+- `assets/goblin/attack1.png`, `attack2.png`, `attack3.png`, `attack4.png`
+- `assets/goblin/backfire1.png`, `backfire2.png`, `backfire3.png`, `backfire4.png`
+- `assets/goblin/hit1.png`, `hit2.png`, `hit3.png`, `hit4.png`
+- `assets/goblin/victory1.png`, `victory2.png`
+- `assets/goblin/defeat1.png`, `defeat2.png`
 
 All battle animation sheets are expected to be **4x4 sprite sheets**.
 
