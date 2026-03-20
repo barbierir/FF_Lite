@@ -135,6 +135,9 @@ function getActionAsset(action, variant) {
   const safeVariant = Number.isInteger(variant) && variant >= 1 && variant <= count ? variant : 1;
   return `assets/goblin/${assetBase}${safeVariant}.png`;
 }
+function pickTimingMultiplier() {
+  return 0.9 + Math.random() * 0.2;
+}
 function getActionFallbackAsset(action) {
   const normalizedAction = normalizeAnimationAction(action);
   return ACTION_ASSET_BASE_NAMES[normalizedAction] ? getActionAsset(normalizedAction, 1) : getActionAsset('idle', 1);
@@ -152,33 +155,38 @@ function createAnimationState(currentAction = 'idle') {
   return {
     currentAction: null,
     currentVariant: null,
+    currentTimingMultiplier: 1,
     currentAsset: getActionAsset(currentAction, 1),
-    lastVariant: {},
+    lastVariantByAction: {},
   };
 }
-function selectCreatureAnimationVariant(fighter, action, { reroll = true } = {}) {
-  if (!fighter) return { action: 'idle', variant: 1, asset: getActionAsset('idle', 1) };
+function selectCreatureAnimationState(fighter, action, { reroll = true } = {}) {
+  if (!fighter) return { action: 'idle', variant: 1, timingMultiplier: 1, asset: getActionAsset('idle', 1) };
   const normalizedAction = normalizeAnimationAction(action);
   fighter.animationState ||= createAnimationState(normalizedAction);
   const currentVariant = fighter.animationState.currentVariant;
+  const currentTimingMultiplier = fighter.animationState.currentTimingMultiplier;
   if (!reroll && fighter.animationState.currentAction === normalizedAction && currentVariant) {
     return {
       action: normalizedAction,
       variant: currentVariant,
+      timingMultiplier: Number.isFinite(currentTimingMultiplier) ? currentTimingMultiplier : 1,
       asset: fighter.animationState.currentAsset || getActionAsset(normalizedAction, currentVariant),
     };
   }
-  const lastVariant = fighter.animationState.lastVariant?.[normalizedAction];
+  const lastVariant = fighter.animationState.lastVariantByAction?.[normalizedAction];
   const variant = pickRandomVariant(normalizedAction, lastVariant);
+  const timingMultiplier = pickTimingMultiplier();
   const asset = getActionAsset(normalizedAction, variant);
   fighter.animationState.currentAction = normalizedAction;
   fighter.animationState.currentVariant = variant;
+  fighter.animationState.currentTimingMultiplier = timingMultiplier;
   fighter.animationState.currentAsset = asset;
-  fighter.animationState.lastVariant = {
-    ...(fighter.animationState.lastVariant || {}),
+  fighter.animationState.lastVariantByAction = {
+    ...(fighter.animationState.lastVariantByAction || {}),
     [normalizedAction]: variant,
   };
-  return { action: normalizedAction, variant, asset };
+  return { action: normalizedAction, variant, timingMultiplier, asset };
 }
 function preloadBattleAnimationAssets() {
   getAllBattleActionAssets().forEach((src) => {
@@ -763,12 +771,14 @@ class SpriteSheetAnimator {
   play(stateName, onEnd, opts = {}) {
     const normalizedAction = normalizeAnimationAction(stateName);
     const variant = Number.isInteger(opts.variant) ? opts.variant : 1;
+    const timingMultiplier = Number.isFinite(opts.timingMultiplier) ? opts.timingMultiplier : 1;
     return this.playSheet({
       stateName: normalizedAction,
       src: opts.src || getActionAsset(normalizedAction, variant),
       fallbackSrc: opts.fallbackSrc || getActionFallbackAsset(normalizedAction),
       rows: this.rows,
       cols: this.cols,
+      timingMultiplier,
       ...ANIMATION_CONFIG[normalizedAction],
     }, onEnd);
   }
@@ -779,6 +789,7 @@ class SpriteSheetAnimator {
       config: {
         loop: Boolean(sheet.loop),
         frameDuration: sheet.frameDuration || ANIMATION_CONFIG.idle.frameDuration,
+        timingMultiplier: Number.isFinite(sheet.timingMultiplier) ? sheet.timingMultiplier : 1,
         freezeLastFrame: Boolean(sheet.freezeLastFrame),
       },
       fallbackSrc: sheet.fallbackSrc || getActionFallbackAsset(sheet.stateName),
@@ -876,7 +887,7 @@ class SpriteSheetAnimator {
       this.frame = next;
       this.drawFrame();
       this.tick();
-    }, config.frameDuration);
+    }, config.frameDuration * (Number.isFinite(config.timingMultiplier) ? config.timingMultiplier : 1));
   }
   stop() { clearTimeout(this.timer); }
 }
@@ -1373,12 +1384,15 @@ function playFighterAnimation(index, animation) {
   if (!state.match || index == null || !animation) return;
   const fighter = state.match.fighters[index];
   if (!fighter) return;
-  setFighterState(index, animation);
-  const selection = selectCreatureAnimationVariant(fighter, animation, { reroll: true });
+  const normalizedAction = normalizeAnimationAction(animation);
+  const isActionChange = fighter.animationState?.currentAction !== normalizedAction;
+  setFighterState(index, normalizedAction);
+  const selection = selectCreatureAnimationState(fighter, normalizedAction, { reroll: isActionChange });
   state.match.animators?.[index]?.play(selection.action, undefined, {
     variant: selection.variant,
     src: selection.asset,
     fallbackSrc: getActionFallbackAsset(selection.action),
+    timingMultiplier: selection.timingMultiplier,
   });
 }
 function setAllFighterStates(animation) {
@@ -1390,12 +1404,13 @@ function restoreMatchAnimators({ force = false } = {}) {
   state.match.animators.forEach((animator, index) => {
     const fighter = state.match.fighters[index];
     const fighterState = fighter?.state || 'idle';
-    const selection = selectCreatureAnimationVariant(fighter, fighterState, { reroll: false });
+    const selection = selectCreatureAnimationState(fighter, fighterState, { reroll: false });
     if (!force && animator.current?.stateName === fighterState && animator.current?.src === selection.asset) return;
     animator.play(selection.action, undefined, {
       variant: selection.variant,
       src: selection.asset,
       fallbackSrc: getActionFallbackAsset(selection.action),
+      timingMultiplier: selection.timingMultiplier,
     });
   });
 }
