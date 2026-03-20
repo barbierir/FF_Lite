@@ -2047,7 +2047,7 @@ async function finishMatch() {
 
 function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex) {
   return `
-    <div class="goblin-frame sprite-render sprite-render-home" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}">
+    <div class="goblin-frame home-preview-render" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}">
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
@@ -2278,7 +2278,7 @@ function renderShareLinkRow(url, { buttonClass = 'btn-bounce', buttonLabel = 'Co
   const safeButtonClass = escapeHtml(buttonClass);
   const safeButtonLabel = escapeHtml(buttonLabel);
   return `<div class="share-link-row">
-    <div class="share-link-display" title="${safeUrl}" aria-label="Generated match link">${safeUrl}</div>
+    <input class="share-link-input" type="text" value="${safeUrl}" title="${safeUrl}" aria-label="Generated match link" readonly spellcheck="false" autocomplete="off">
     <button id="copy-link" class="share-link-copy ${safeButtonClass}" type="button">${safeButtonLabel}</button>
   </div>`;
 }
