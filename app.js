@@ -2067,9 +2067,6 @@ function renderStatusCard(title, body, { showHomeButton = true } = {}) {
 
 function renderHome() {
   const isChallengerView = state.homeView === 'challenger' && state.pendingMatch?.payload?.playerA?.id === state.me.id;
-  const challengerStatus = state.pendingMatch?.opponentJoined
-    ? 'Avversario trovato: il match partirà da solo.'
-    : 'In attesa che il player B apra il link.';
   const liveItems = [
     { label: 'Live arenas', value: state.pendingMatch?.opponentJoined ? '01' : '03', meta: state.pendingMatch?.opponentJoined ? 'Una lobby pronta a scoppiare.' : 'Goblin in cerca di sfidanti.' },
     { label: 'Recent winner', value: 'Bogbelch', meta: 'Ha chiuso un fight in 52 sec.' },
@@ -2085,10 +2082,8 @@ function renderHome() {
         <span class="section-kicker">Lobby live</span>
         <h3>Challenge link pronto</h3>
       </div>
-      <p class="muted challenge-card-text">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
       ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
       ${copyFeedbackMarkup}
-      <p class="muted challenge-card-text">${challengerStatus}</p>
       <div class="status-chip-row">
         <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
         <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
@@ -2102,7 +2097,7 @@ function renderHome() {
       <p class="muted challenge-card-text">Crea il match senza lasciare la home, poi manda il link al player B.</p>
       ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
       ${copyFeedbackMarkup}
-      <p class="muted challenge-card-text">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
+      ${state.pendingMatch.opponentJoined ? '<p class="muted challenge-card-text">Avversario trovato: il match partirà da solo.</p>' : ''}
     </div>` : `
     <div class="hero-cta-block cta-alive card-lift">
       <div class="inline-actions hero-actions">
