@@ -1,6 +1,6 @@
 const STORAGE_KEYS = {
-  leaderboard: 'ff-lite-leaderboard',
   playerProfile: 'ff-lite-player-profile',
+  audioPreferences: 'ff-lite-audio-preferences',
 };
 
 const SPRITES = {
@@ -44,6 +44,7 @@ const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 
 const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel'];
 const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
+const LEADERBOARD_DAY_TIMEZONE = 'UTC';
 const PALETTE_VARIANTS = [
   { hue: 0, sat: 1, bright: 1 },
   { hue: 20, sat: 1.1, bright: 1 },
@@ -86,7 +87,8 @@ const state = {
   pendingMatch: null,
   match: null,
   logs: [],
-  leaderboard: loadLeaderboard(),
+  leaderboard: [],
+  leaderboardStatus: 'idle',
   previewAnimators: [],
   pendingStartTimer: null,
   activeMatchSubscription: null,
@@ -95,109 +97,152 @@ const state = {
   errorMessage: '',
 };
 
-class BackgroundMusicManager {
-  constructor(config) {
-    this.config = config;
-    this.audio = null;
-    this.started = false;
-    this.failed = false;
-    this.boundStart = this.start.bind(this);
-    this.isArmed = false;
-  }
-  ensureAudio() {
-    if (this.audio || this.failed) return this.audio;
-    try {
-      const audio = new Audio(this.config.src);
-      audio.loop = true;
-      audio.preload = 'none';
-      audio.volume = this.config.volume;
-      audio.addEventListener('error', () => {
-        this.failed = true;
-        this.audio = null;
-      });
-      this.audio = audio;
-    } catch {
-      this.failed = true;
-    }
-    return this.audio;
-  }
-  armAutoStart() {
-    if (this.isArmed || this.started || this.failed) return;
-    this.isArmed = true;
-    const options = { passive: true };
-    window.addEventListener('pointerdown', this.boundStart, options);
-    window.addEventListener('touchstart', this.boundStart, options);
-    window.addEventListener('keydown', this.boundStart);
-  }
-  disarmAutoStart() {
-    if (!this.isArmed) return;
-    this.isArmed = false;
-    window.removeEventListener('pointerdown', this.boundStart);
-    window.removeEventListener('touchstart', this.boundStart);
-    window.removeEventListener('keydown', this.boundStart);
-  }
-  async start() {
-    if (this.started || this.failed) return;
-    const audio = this.ensureAudio();
-    if (!audio) return;
-    try {
-      audio.volume = this.config.volume;
-      await audio.play();
-      this.started = true;
-      this.disarmAutoStart();
-    } catch {
-      // Browser autoplay or missing-file issue: keep the game running silently.
-    }
-  }
-  sync() {
-    if (this.failed) return;
-    const audio = this.ensureAudio();
-    if (!this.started) {
-      this.armAutoStart();
-    }
-    if (!audio || !this.started) return;
-    if (audio.paused) {
-      audio.play().catch(() => {});
-    }
+function loadAudioPreferences() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.audioPreferences) || 'null');
+    const volume = Number(stored?.volume);
+    return {
+      muted: Boolean(stored?.muted),
+      volume: Number.isFinite(volume) ? clamp(volume, 0, 1) : 1,
+    };
+  } catch {
+    return { muted: false, volume: 1 };
   }
 }
 
-class SoundEffectsManager {
-  constructor(config) {
+class AudioManager {
+  constructor(config, initialPreferences) {
     this.config = config;
-    this.cache = new Map();
-    this.cooldowns = new Map();
+    this.preferences = initialPreferences;
+    this.bgm = null;
+    this.sfxCache = new Map();
+    this.sfxCooldowns = new Map();
     this.minInterval = 120;
+    this.failed = false;
+    this.autoplayBlocked = false;
+    this.autoplayArmed = false;
+    this.boundResume = this.resumeFromInteraction.bind(this);
   }
-  getAudio(name) {
-    if (this.cache.has(name)) return this.cache.get(name);
-    const entry = this.config[name];
+  savePreferences() {
+    localStorage.setItem(STORAGE_KEYS.audioPreferences, JSON.stringify(this.preferences));
+  }
+  getEffectiveVolume(baseVolume = 1) {
+    return this.preferences.muted ? 0 : clamp(baseVolume * this.preferences.volume, 0, 1);
+  }
+  ensureBgm() {
+    if (this.bgm || this.failed) return this.bgm;
+    try {
+      const audio = new Audio(this.config.bgm.src);
+      audio.loop = true;
+      audio.preload = 'auto';
+      audio.volume = this.getEffectiveVolume(this.config.bgm.volume);
+      audio.addEventListener('error', () => {
+        this.failed = true;
+        this.bgm = null;
+      }, { once: true });
+      this.bgm = audio;
+    } catch {
+      this.failed = true;
+    }
+    return this.bgm;
+  }
+  ensureSfx(name) {
+    if (this.sfxCache.has(name)) return this.sfxCache.get(name);
+    const entry = this.config.sfx[name];
     if (!entry) return null;
     try {
       const audio = new Audio(entry.src);
-      audio.preload = 'none';
-      audio.volume = entry.volume;
+      audio.preload = 'auto';
+      audio.volume = this.getEffectiveVolume(entry.volume);
       audio.addEventListener('error', () => {
-        this.cache.set(name, null);
+        this.sfxCache.set(name, null);
       }, { once: true });
-      this.cache.set(name, audio);
+      this.sfxCache.set(name, audio);
       return audio;
     } catch {
-      this.cache.set(name, null);
+      this.sfxCache.set(name, null);
       return null;
     }
   }
-  play(name) {
-    const audio = this.getAudio(name);
+  applyPreferences() {
+    const bgm = this.ensureBgm();
+    if (bgm) bgm.volume = this.getEffectiveVolume(this.config.bgm.volume);
+    Object.entries(this.config.sfx).forEach(([name, entry]) => {
+      const audio = this.sfxCache.get(name);
+      if (audio) audio.volume = this.getEffectiveVolume(entry.volume);
+    });
+  }
+  setMuted(muted) {
+    this.preferences.muted = Boolean(muted);
+    this.savePreferences();
+    this.applyPreferences();
+    if (!this.preferences.muted) this.syncHomePlayback();
+  }
+  setVolume(volume) {
+    this.preferences.volume = clamp(Number(volume) || 0, 0, 1);
+    this.savePreferences();
+    this.applyPreferences();
+    if (this.preferences.volume > 0 && !this.preferences.muted) this.syncHomePlayback();
+  }
+  armAutoplayFallback() {
+    if (this.autoplayArmed || this.failed) return;
+    this.autoplayArmed = true;
+    const options = { passive: true };
+    window.addEventListener('pointerdown', this.boundResume, options);
+    window.addEventListener('touchstart', this.boundResume, options);
+    window.addEventListener('keydown', this.boundResume);
+    window.addEventListener('click', this.boundResume, options);
+  }
+  disarmAutoplayFallback() {
+    if (!this.autoplayArmed) return;
+    this.autoplayArmed = false;
+    window.removeEventListener('pointerdown', this.boundResume);
+    window.removeEventListener('touchstart', this.boundResume);
+    window.removeEventListener('keydown', this.boundResume);
+    window.removeEventListener('click', this.boundResume);
+  }
+  async tryStartBgm() {
+    if (this.failed) return false;
+    const bgm = this.ensureBgm();
+    if (!bgm) return false;
+    bgm.volume = this.getEffectiveVolume(this.config.bgm.volume);
+    try {
+      await bgm.play();
+      this.autoplayBlocked = false;
+      this.disarmAutoplayFallback();
+      return true;
+    } catch {
+      this.autoplayBlocked = true;
+      this.armAutoplayFallback();
+      return false;
+    }
+  }
+  initializeForHome() {
+    this.ensureBgm();
+    this.tryStartBgm();
+  }
+  syncHomePlayback() {
+    const bgm = this.ensureBgm();
+    if (!bgm) return;
+    bgm.volume = this.getEffectiveVolume(this.config.bgm.volume);
+    if (bgm.paused && !this.preferences.muted && this.preferences.volume > 0) {
+      this.tryStartBgm();
+    }
+  }
+  async resumeFromInteraction() {
+    await this.tryStartBgm();
+  }
+  playSfx(name) {
+    const audio = this.ensureSfx(name);
     if (!audio) return;
     const now = performance.now();
-    const last = this.cooldowns.get(name) || 0;
+    const last = this.sfxCooldowns.get(name) || 0;
     if (now - last < this.minInterval) return;
-    this.cooldowns.set(name, now);
+    this.sfxCooldowns.set(name, now);
     try {
       audio.pause();
       audio.currentTime = 0;
-      audio.volume = this.config[name].volume;
+      audio.volume = this.getEffectiveVolume(this.config.sfx[name].volume);
       audio.play().catch(() => {});
     } catch {
       // Missing file or browser restriction: fail silently.
@@ -205,8 +250,7 @@ class SoundEffectsManager {
   }
 }
 
-const bgmManager = new BackgroundMusicManager(AUDIO_CONFIG.bgm);
-const sfxManager = new SoundEffectsManager(AUDIO_CONFIG.sfx);
+const audioManager = new AudioManager(AUDIO_CONFIG, loadAudioPreferences());
 
 function hashString(str) {
   let h = 2166136261;
@@ -352,21 +396,68 @@ function loadLocalPlayer() {
   saveLocalPlayer(player);
   return player;
 }
-function loadLeaderboard() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.leaderboard) || '[]'); }
-  catch { return []; }
+function getCurrentLeaderboardDayBucket() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: LEADERBOARD_DAY_TIMEZONE }).format(new Date());
 }
-function saveLeaderboard() {
-  localStorage.setItem(STORAGE_KEYS.leaderboard, JSON.stringify(state.leaderboard));
+function normalizeLeaderboardRow(record) {
+  const wins = Number(record.wins || 0);
+  const losses = Number(record.losses || 0);
+  const draws = Number(record.draws || 0);
+  const matchesPlayed = Number(record.matches_played || (wins + losses + draws));
+  return {
+    playerId: record.player_id,
+    name: record.display_name || 'Goblin',
+    wins,
+    losses,
+    draws,
+    matchesPlayed,
+    winRate: matchesPlayed ? Math.round((wins / matchesPlayed) * 100) : 0,
+  };
 }
-function upsertRecord(name, resultKey) {
-  const existing = state.leaderboard.find((row) => row.name === name);
-  const row = existing || { name, wins: 0, losses: 0, draws: 0 };
-  row[resultKey] += 1;
-  if (!existing) state.leaderboard.push(row);
+function sortLeaderboardRows(rows) {
+  rows.sort((a, b) => b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.draws - a.draws || a.name.localeCompare(b.name));
+  return rows;
 }
-function sortLeaderboard() {
-  state.leaderboard.sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || a.name.localeCompare(b.name));
+async function loadLeaderboard() {
+  state.leaderboardStatus = 'loading';
+  render();
+  if (!isBackendConfigured()) {
+    state.leaderboard = [];
+    state.leaderboardStatus = 'ready';
+    render();
+    return;
+  }
+  try {
+    const dayBucket = getCurrentLeaderboardDayBucket();
+    const rows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&select=player_id,display_name,wins,losses,draws,matches_played&order=wins.desc,draws.desc,losses.asc,display_name.asc`, { method: 'GET', prefer: undefined });
+    state.leaderboard = sortLeaderboardRows((rows || []).map(normalizeLeaderboardRow));
+    state.leaderboardStatus = 'ready';
+  } catch (error) {
+    console.error('Failed to load leaderboard', error);
+    state.leaderboard = [];
+    state.leaderboardStatus = 'error';
+  }
+  render();
+}
+async function upsertDailyStat(player, increments) {
+  if (!player?.id || !isBackendConfigured()) return;
+  const dayBucket = getCurrentLeaderboardDayBucket();
+  const existingRows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&player_id=eq.${encodeURIComponent(player.id)}&select=*`, { method: 'GET', prefer: undefined });
+  const current = existingRows?.[0];
+  const next = {
+    day_bucket: dayBucket,
+    player_id: player.id,
+    display_name: player.name,
+    wins: Number(current?.wins || 0) + (increments.wins || 0),
+    losses: Number(current?.losses || 0) + (increments.losses || 0),
+    draws: Number(current?.draws || 0) + (increments.draws || 0),
+    matches_played: Number(current?.matches_played || 0) + (increments.matchesPlayed || 0),
+  };
+  await supabaseRequest('ff_lite_daily_stats', {
+    method: 'POST',
+    body: next,
+    prefer: 'resolution=merge-duplicates,return=representation',
+  });
 }
 
 class SpriteSheetAnimator {
@@ -655,7 +746,11 @@ function setPendingMatchState(nextPendingMatch) {
   watchSharedMatch(matchId, (sharedMatch) => {
     const pendingMatch = state.pendingMatch;
     if (!sharedMatch || !pendingMatch || pendingMatch.payload?.id !== matchId || sharedMatch.id !== matchId) return;
-    if (state.match || state.screen === 'match' || state.screen === 'postmatch') return;
+    if (state.match && (state.screen === 'match' || state.screen === 'postmatch')) {
+      hydrateMatchFromSharedState(sharedMatch);
+      updateMatchUI();
+      return;
+    }
     if (sharedMatch.status === 'active' && sharedMatch.playerB) {
       state.pendingMatch = {
         ...pendingMatch,
@@ -713,7 +808,7 @@ function resetToHome() {
   state.loading = false;
   state.errorMessage = '';
   state.screen = 'home';
-  bgmManager.sync();
+  audioManager.syncHomePlayback();
   render();
 }
 async function startCreateFlow() {
@@ -731,7 +826,7 @@ async function startCreateFlow() {
     });
     state.screen = 'home';
     state.loading = false;
-    bgmManager.sync();
+    audioManager.syncHomePlayback();
     render();
   } catch (error) {
     console.error(error);
@@ -759,7 +854,7 @@ async function startJoinedFlow(matchId) {
     });
     state.screen = 'join';
     state.loading = false;
-    bgmManager.sync();
+    audioManager.syncHomePlayback();
     render();
     queueMatchStart(sharedMatch);
   } catch (error) {
@@ -772,7 +867,6 @@ function queueMatchStart(payload) {
   state.pendingStartTimer = window.setTimeout(() => {
     state.pendingStartTimer = null;
     if (state.match || state.screen === 'match' || state.screen === 'postmatch') return;
-    clearMatchWatcher();
     state.screen = 'match';
     state.match = createResolvedMatch(payload);
     state.logs = ['I goblini si annusano con sospetto...'];
@@ -781,20 +875,25 @@ function queueMatchStart(payload) {
   }, 900);
 }
 function createResolvedMatch(payload) {
-  const playerA = withResolvedVariant(payload.playerA);
+  const sharedState = payload.sharedState || {};
+  const sharedFighters = Array.isArray(sharedState.fighters) ? sharedState.fighters : [];
+  const sharedPlayerA = sharedFighters.find((fighter) => fighter.slot === 'A');
+  const sharedPlayerB = sharedFighters.find((fighter) => fighter.slot === 'B');
+  const playerA = withResolvedVariant({ ...payload.playerA, variantIndex: sharedPlayerA?.variantIndex ?? payload.playerA?.variantIndex });
   const fallbackPlayerB = {
     id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`), creatureId: 'goblin',
   };
-  const playerB = withResolvedVariant(payload.playerB || fallbackPlayerB, playerA.variantIndex, { preserveExisting: false });
+  const playerB = withResolvedVariant({ ...(payload.playerB || fallbackPlayerB), variantIndex: sharedPlayerB?.variantIndex ?? payload.playerB?.variantIndex }, playerA.variantIndex, { preserveExisting: false });
   return {
     id: payload.id,
+    sharedState,
     fighters: [
-      { slot: 'A', side: 'left', ...playerA, hp: 100, state: 'idle' },
-      { slot: 'B', side: 'right', ...playerB, hp: 100, state: 'idle' },
+      { slot: 'A', side: 'left', ...playerA, hp: Number(sharedPlayerA?.hp ?? 100), state: 'idle' },
+      { slot: 'B', side: 'right', ...playerB, hp: Number(sharedPlayerB?.hp ?? 100), state: 'idle' },
     ],
-    turn: 0,
-    finished: false,
-    winner: null,
+    turn: Number(sharedState.turn || 0),
+    finished: payload.status === 'finished',
+    winner: sharedState.winner || null,
   };
 }
 function updateMatchUI() {
@@ -805,6 +904,8 @@ function updateMatchUI() {
     if (fill) fill.style.setProperty('--hp', `${fighter.hp}%`);
     if (label) label.textContent = `HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}`;
   });
+  const turnLabel = document.querySelector('[data-turn-counter]');
+  if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
   if (logPanel) logPanel.innerHTML = state.logs.map((line) => `<p class="log-line">${line}</p>`).join('');
 }
@@ -823,33 +924,46 @@ function computeAction(attacker, defender, turn) {
   const damage = Math.round(intensity + (roll % 8));
   return { type: 'attack', amount: damage, text: `${attacker.name} colpisce ${defender.name} per ${damage} danni aromatici!` };
 }
-function updateLeaderboardForResult(winner, loser, draw = false) {
-  if (draw) {
-    upsertRecord(state.match.fighters[0].name, 'draws');
-    upsertRecord(state.match.fighters[1].name, 'draws');
-  } else {
-    upsertRecord(winner.name, 'wins');
-    upsertRecord(loser.name, 'losses');
-  }
-  sortLeaderboard();
-  saveLeaderboard();
+function isLeaderboardWriteOwner() {
+  return Boolean(state.match?.fighters?.[0]?.id && state.me?.id === state.match.fighters[0].id);
 }
-async function syncSharedMatchResult() {
+async function updateLeaderboardForResult(winner, loser, draw = false) {
+  if (!state.match || !isLeaderboardWriteOwner()) return;
+  const [playerA, playerB] = state.match.fighters;
+  if (draw) {
+    await Promise.all([
+      upsertDailyStat(playerA, { draws: 1, matchesPlayed: 1 }),
+      upsertDailyStat(playerB, { draws: 1, matchesPlayed: 1 }),
+    ]);
+  } else {
+    await Promise.all([
+      upsertDailyStat(winner, { wins: 1, matchesPlayed: 1 }),
+      upsertDailyStat(loser, { losses: 1, matchesPlayed: 1 }),
+    ]);
+  }
+  if (state.screen === 'leaderboard') loadLeaderboard();
+}
+async function syncSharedMatchState(extraState = {}) {
   if (!state.match || !isBackendConfigured()) return;
   const winner = state.match.winner ? { id: state.match.winner.id, name: state.match.winner.name } : null;
   try {
     await updateSharedMatch(state.match.id, {
-      status: 'finished',
+      status: state.match.finished ? 'finished' : 'active',
       shared_state: {
-        finishedAt: new Date().toISOString(),
+        ...state.match.sharedState,
+        ...extraState,
+        finishedAt: state.match.finished ? new Date().toISOString() : undefined,
         winner,
         turn: state.match.turn,
-        fighters: state.match.fighters.map(({ slot, id, name, hp }) => ({ slot, id, name, hp })),
+        fighters: state.match.fighters.map(({ slot, id, name, hp, variantIndex }) => ({ slot, id, name, hp, variantIndex })),
       },
     });
   } catch (error) {
-    console.error('Failed to persist final match state', error);
+    console.error('Failed to persist match state', error);
   }
+}
+async function syncSharedMatchResult() {
+  await syncSharedMatchState();
 }
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -884,7 +998,7 @@ async function runMatchActionGroup(actions, totalDuration) {
       updateMatchUI();
     }, startAt);
     if (action.sound) {
-      schedule(() => sfxManager.play(action.sound), startAt + (action.soundDelay ?? 0));
+      schedule(() => audioManager.playSfx(action.sound), startAt + (action.soundDelay ?? 0));
     }
     if (action.apply) {
       schedule(() => {
@@ -972,7 +1086,7 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
 }
 async function runMatchSequence() {
   const [a, b] = state.match.fighters;
-  bgmManager.sync();
+  audioManager.syncHomePlayback();
   await runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'matchStart', duration: MATCH_ACTION_TIMINGS.intro });
   while (!state.match.finished) {
     state.match.turn += 1;
@@ -984,6 +1098,7 @@ async function runMatchSequence() {
     for (const group of buildTurnActionGroups(attackerIndex, defenderIndex, turnAction)) {
       await runMatchActionGroup(group.actions, group.duration);
     }
+    await syncSharedMatchState({ lastAction: turnAction.type });
     if (a.hp <= 0 || b.hp <= 0 || state.match.turn >= 12) {
       await finishMatch();
       return;
@@ -996,7 +1111,7 @@ async function finishMatch() {
   state.match.finished = true;
   if (a.hp === b.hp) {
     state.match.winner = null;
-    updateLeaderboardForResult(null, null, true);
+    await updateLeaderboardForResult(null, null, true);
     await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'matchEnd', duration: MATCH_ACTION_TIMINGS.draw, log: 'Pareggio tossico: nessuno crolla davvero.' });
   } else {
     const winner = a.hp > b.hp ? a : b;
@@ -1012,9 +1127,9 @@ async function finishMatch() {
       duration: MATCH_ACTION_TIMINGS.victory,
       log: `${winner.name} trionfa nella nebbia verdognola.`,
     });
-    sfxManager.play('victory');
-    sfxManager.play('defeat');
-    updateLeaderboardForResult(winner, loser, false);
+    audioManager.playSfx('victory');
+    audioManager.playSfx('defeat');
+    await updateLeaderboardForResult(winner, loser, false);
   }
   state.screen = 'postmatch';
   render();
@@ -1101,6 +1216,18 @@ function renderCreate() {
       </div>
     </section>`;
 }
+function hydrateMatchFromSharedState(sharedMatch) {
+  if (!state.match || !sharedMatch?.sharedState) return;
+  state.match.turn = Number(sharedMatch.sharedState.turn || 0);
+  state.match.sharedState = sharedMatch.sharedState;
+  const sharedFighters = Array.isArray(sharedMatch.sharedState.fighters) ? sharedMatch.sharedState.fighters : [];
+  state.match.fighters = state.match.fighters.map((fighter) => {
+    const shared = sharedFighters.find((entry) => entry.slot === fighter.slot);
+    return shared ? { ...fighter, hp: Number(shared.hp ?? fighter.hp) } : fighter;
+  });
+  state.match.winner = sharedMatch.sharedState.winner || state.match.winner;
+}
+
 function renderJoin() {
   const playerB = state.pendingMatch.payload.playerB;
   return `
@@ -1128,8 +1255,8 @@ function renderMatchOrPost() {
     <section class="panel match-layout">
       <div class="match-head">
         <div class="match-meta">
-          <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match automatico'}</h1>
-          <p class="muted">Turno ${state.match.turn}. La potenza aumenta ogni round, quindi il caos non dura troppo.</p>
+          <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match'}</h1>
+          <p class="muted" data-turn-counter>Turno ${state.match.turn}</p>
         </div>
         ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
       </div>
@@ -1171,17 +1298,18 @@ function renderLeaderboard() {
     <section class="panel leaderboard-layout">
       <div>
         <h1 class="screen-title">Leaderboard</h1>
-        <p class="muted">Statistiche Lite locali salvate nel browser corrente.</p>
+        <p class="muted">Classifica giornaliera Lite basata sul bucket data corrente (${LEADERBOARD_DAY_TIMEZONE}).</p>
       </div>
       <table class="table">
-        <thead><tr><th>Player</th><th>Wins</th><th>Losses</th><th>Draws</th></tr></thead>
+        <thead><tr><th>Player</th><th>Wins</th><th>Losses</th><th>Draws</th><th>Matches</th><th>Win rate</th></tr></thead>
         <tbody>
-          ${state.leaderboard.length ? state.leaderboard.map((row) => `<tr><td>${row.name}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td></tr>`).join('') : '<tr><td colspan="4">Nessun risultato ancora.</td></tr>'}
+          ${state.leaderboard.length ? state.leaderboard.map((row) => `<tr><td>${row.name}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${row.matchesPlayed}</td><td>${row.winRate}%</td></tr>`).join('') : `<tr><td colspan="6">${state.leaderboardStatus === 'loading' ? 'Caricamento classifica…' : 'Nessun risultato ancora per oggi.'}</td></tr>`}
         </tbody>
       </table>
     </section>`;
 }
 function render() {
+  if (state.screen === 'home') audioManager.initializeForHome();
   state.previewAnimators.forEach((animator) => animator.stop());
   state.previewAnimators = [];
   const app = document.getElementById('app');
@@ -1191,6 +1319,13 @@ function render() {
         <button id="nav-home">Home</button>
         <button class="secondary" id="nav-create">Crea match</button>
         <button class="ghost" id="nav-leaderboard">Leaderboard</button>
+        <div class="audio-controls" aria-label="Audio controls">
+          <button class="ghost audio-toggle" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
+          <label class="audio-slider-wrap" for="audio-volume">
+            <span>Vol</span>
+            <input id="audio-volume" type="range" min="0" max="100" value="${Math.round(audioManager.preferences.volume * 100)}" />
+          </label>
+        </div>
       </nav>
       ${state.loading ? renderStatusCard('Connessione al match condiviso', 'Sto sincronizzando il match Lite con il backend condiviso…') : ''}
       ${state.screen === 'home' ? renderHome() : ''}
@@ -1204,8 +1339,19 @@ function render() {
   document.getElementById('nav-home')?.addEventListener('click', resetToHome);
   document.getElementById('status-home')?.addEventListener('click', resetToHome);
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
+  document.getElementById('audio-toggle')?.addEventListener('click', () => {
+    audioManager.setMuted(!audioManager.preferences.muted);
+    render();
+  });
+  document.getElementById('audio-volume')?.addEventListener('input', (event) => {
+    const nextVolume = Number(event.target.value) / 100;
+    audioManager.setVolume(nextVolume);
+    if (nextVolume > 0 && audioManager.preferences.muted) audioManager.setMuted(false);
+    if (nextVolume === 0 && !audioManager.preferences.muted) audioManager.setMuted(true);
+    render();
+  });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
-  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
+  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; loadLeaderboard(); audioManager.syncHomePlayback(); render(); });
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(state.pendingMatch.link);
@@ -1215,7 +1361,7 @@ function render() {
     }
   });
   document.getElementById('post-home')?.addEventListener('click', resetToHome);
-  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; bgmManager.sync(); render(); });
+  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; loadLeaderboard(); audioManager.syncHomePlayback(); render(); });
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
     const variantIndex = Number(node.dataset.variantIndex);
@@ -1246,8 +1392,7 @@ function render() {
   }
 }
 
-bgmManager.ensureAudio();
-bgmManager.armAutoStart();
+audioManager.initializeForHome();
 
 const joinMatchId = parseJoinMatchId();
 if (joinMatchId) {

@@ -68,6 +68,30 @@ a { color: #fde68a; }
 }
 .topbar { justify-content: center; margin-bottom: 14px; }
 
+.audio-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.audio-toggle {
+  padding: 0.55rem 0.8rem;
+  min-width: 52px;
+}
+.audio-slider-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: rgba(255,255,255,0.82);
+}
+.audio-slider-wrap input {
+  width: 110px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid rgba(255,255,255,0.1);
@@ -436,4 +460,9 @@ a { color: #fde68a; }
   .footer-actions {
     gap: 10px;
   }
+  .audio-controls {
+    width: 100%;
+    justify-content: center;
+  }
 }
+
