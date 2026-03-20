@@ -757,6 +757,7 @@ function setPendingMatchState(nextPendingMatch) {
     if (state.match && (state.screen === 'match' || state.screen === 'postmatch')) {
       if (isSharedStateNewerThanLocal(sharedMatch)) {
         hydrateMatchFromSharedState(sharedMatch);
+        restoreMatchAnimators();
         updateMatchUI();
       }
       return;
@@ -919,13 +920,20 @@ function createResolvedMatch(payload) {
     id: payload.id,
     sharedState,
     fighters: [
-      { slot: 'A', side: 'left', ...playerA, hp: Number(sharedPlayerA?.hp ?? 100), state: 'idle' },
-      { slot: 'B', side: 'right', ...playerB, hp: Number(sharedPlayerB?.hp ?? 100), state: 'idle' },
+      { slot: 'A', side: 'left', ...playerA, hp: Number(sharedPlayerA?.hp ?? 100), state: sharedPlayerA?.state || 'idle' },
+      { slot: 'B', side: 'right', ...playerB, hp: Number(sharedPlayerB?.hp ?? 100), state: sharedPlayerB?.state || 'idle' },
     ],
     turn: Number(sharedState.turn || 0),
     finished: payload.status === 'finished',
     winner: sharedState.winner || null,
   };
+}
+function refreshAudioControlsUI() {
+  const toggle = document.getElementById('audio-toggle');
+  const slider = document.getElementById('audio-volume');
+  const isMuted = audioManager.preferences.muted || audioManager.preferences.volume === 0;
+  if (toggle) toggle.textContent = isMuted ? '🔇' : '🔊';
+  if (slider) slider.value = String(Math.round(audioManager.preferences.volume * 100));
 }
 function updateMatchUI() {
   if (!(state.screen === 'match' || state.screen === 'postmatch') || !state.match) return;
@@ -939,6 +947,7 @@ function updateMatchUI() {
   if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
   if (logPanel) logPanel.innerHTML = state.logs.map((line) => `<p class="log-line">${line}</p>`).join('');
+  refreshAudioControlsUI();
 }
 function logLine(text) {
   state.logs = [text, ...state.logs].slice(0, 5);
@@ -986,7 +995,7 @@ async function syncSharedMatchState(extraState = {}) {
         finishedAt: state.match.finished ? new Date().toISOString() : undefined,
         winner,
         turn: state.match.turn,
-        fighters: state.match.fighters.map(({ slot, id, name, hp, variantIndex }) => ({ slot, id, name, hp, variantIndex })),
+        fighters: state.match.fighters.map(({ slot, id, name, hp, variantIndex, state: fighterState }) => ({ slot, id, name, hp, variantIndex, state: fighterState })),
       },
     });
   } catch (error) {
@@ -999,9 +1008,25 @@ async function syncSharedMatchResult() {
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
+function setFighterState(index, animation) {
+  if (!state.match || index == null || !animation) return;
+  const fighter = state.match.fighters[index];
+  if (fighter) fighter.state = animation;
+}
 function playFighterAnimation(index, animation) {
-  if (index == null || !animation) return;
-  state.match.animators[index]?.play(animation);
+  if (!state.match || index == null || !animation) return;
+  setFighterState(index, animation);
+  state.match.animators?.[index]?.play(animation);
+}
+function setAllFighterStates(animation) {
+  if (!state.match || !animation) return;
+  state.match.fighters.forEach((_, index) => setFighterState(index, animation));
+}
+function restoreMatchAnimators() {
+  if (!state.match?.animators?.length) return;
+  state.match.animators.forEach((animator, index) => {
+    animator.play(state.match.fighters[index]?.state || 'idle');
+  });
 }
 async function runMatchAction(action) {
   if (!action) return;
@@ -1021,6 +1046,7 @@ async function runMatchActionGroup(actions, totalDuration) {
     const startAt = Math.max(0, action.startAt || 0);
     schedule(() => {
       if (action.animation === 'idle-all') {
+        setAllFighterStates('idle');
         state.match.animators.forEach((animator) => animator.play('idle'));
       } else {
         playFighterAnimation(action.sourceIndex, action.animation);
@@ -1142,11 +1168,14 @@ async function finishMatch() {
   state.match.finished = true;
   if (a.hp === b.hp) {
     state.match.winner = null;
+    setAllFighterStates('idle');
     await updateLeaderboardForResult(null, null, true);
     await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'matchEnd', duration: MATCH_ACTION_TIMINGS.draw, log: 'Pareggio tossico: nessuno crolla davvero.' });
   } else {
     const winner = a.hp > b.hp ? a : b;
     const loser = winner === a ? b : a;
+    winner.state = 'victory';
+    loser.state = 'defeat';
     state.match.winner = winner;
     await runMatchAction({
       type: 'finish',
@@ -1252,15 +1281,18 @@ function getSharedMatchProgress(sharedMatch) {
   const sharedTurn = Number(sharedState.turn || 0);
   const sharedFighters = Array.isArray(sharedState.fighters) ? sharedState.fighters : [];
   const sharedHpBySlot = new Map();
+  const sharedStateBySlot = new Map();
   sharedFighters.forEach((fighter) => {
     if (!fighter?.slot) return;
     const hp = Number(fighter.hp);
     if (Number.isFinite(hp)) sharedHpBySlot.set(fighter.slot, hp);
+    if (fighter.state) sharedStateBySlot.set(fighter.slot, fighter.state);
   });
   return {
     sharedState,
     sharedTurn: Number.isFinite(sharedTurn) ? sharedTurn : 0,
     sharedHpBySlot,
+    sharedStateBySlot,
     winner: sharedState.winner || null,
     finished: sharedMatch?.status === 'finished' || Boolean(sharedState.winner) || Boolean(sharedState.finishedAt),
   };
@@ -1289,8 +1321,12 @@ function hydrateMatchFromSharedState(sharedMatch) {
   };
   state.match.fighters = state.match.fighters.map((fighter) => {
     const sharedHp = progress.sharedHpBySlot.get(fighter.slot);
-    if (!Number.isFinite(sharedHp)) return fighter;
-    return { ...fighter, hp: Math.min(fighter.hp, sharedHp) };
+    const sharedAnimationState = progress.sharedStateBySlot.get(fighter.slot);
+    return {
+      ...fighter,
+      hp: Number.isFinite(sharedHp) ? Math.min(fighter.hp, sharedHp) : fighter.hp,
+      state: sharedAnimationState || fighter.state || 'idle',
+    };
   });
   if (progress.winner) state.match.winner = progress.winner;
   if (progress.finished) state.match.finished = true;
@@ -1409,14 +1445,14 @@ function render() {
   document.getElementById('nav-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('audio-toggle')?.addEventListener('click', () => {
     audioManager.setMuted(!audioManager.preferences.muted);
-    render();
+    refreshAudioControlsUI();
   });
   document.getElementById('audio-volume')?.addEventListener('input', (event) => {
     const nextVolume = Number(event.target.value) / 100;
     audioManager.setVolume(nextVolume);
     if (nextVolume > 0 && audioManager.preferences.muted) audioManager.setMuted(false);
     if (nextVolume === 0 && !audioManager.preferences.muted) audioManager.setMuted(true);
-    render();
+    refreshAudioControlsUI();
   });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; loadLeaderboard(); audioManager.syncHomePlayback(); render(); });
@@ -1448,16 +1484,10 @@ function render() {
       flip: state.match.fighters[index].side === 'left' ? -1 : 1,
       variant: state.match.fighters[index].variant,
     }));
-    if (state.screen === 'postmatch') {
-      if (state.match.winner) {
-        const winnerIndex = state.match.fighters.findIndex((f) => f.name === state.match.winner.name);
-        state.match.animators[winnerIndex].play('victory');
-        state.match.animators[winnerIndex === 0 ? 1 : 0].play('defeat');
-      } else {
-        state.match.animators.forEach((animator) => animator.play('idle'));
-      }
-    }
+    restoreMatchAnimators();
   }
+
+  refreshAudioControlsUI();
 }
 
 audioManager.initializeForHome();
