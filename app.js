@@ -45,6 +45,8 @@ const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', '
 const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
 const LEADERBOARD_DAY_TIMEZONE = 'UTC';
+const INITIAL_RATING = 1000;
+const ELO_K_FACTOR = 24;
 const PALETTE_VARIANTS = [
   { hue: 0, sat: 1, bright: 1 },
   { hue: 20, sat: 1.1, bright: 1 },
@@ -87,8 +89,8 @@ const state = {
   pendingMatch: null,
   match: null,
   logs: [],
-  leaderboard: [],
-  leaderboardStatus: 'idle',
+  leaderboard: { daily: [], rating: [] },
+  leaderboardStatus: { daily: 'idle', rating: 'idle' },
   previewAnimators: [],
   pendingStartTimer: null,
   pendingStartTimerMatchId: null,
@@ -400,11 +402,12 @@ function loadLocalPlayer() {
 function getCurrentLeaderboardDayBucket() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: LEADERBOARD_DAY_TIMEZONE }).format(new Date());
 }
-function normalizeLeaderboardRow(record) {
+function normalizeLeaderboardRow(record, type = 'daily') {
   const wins = Number(record.wins || 0);
   const losses = Number(record.losses || 0);
   const draws = Number(record.draws || 0);
   const matchesPlayed = Number(record.matches_played || (wins + losses + draws));
+  const rating = Math.round(Number(record.rating || INITIAL_RATING));
   return {
     playerId: record.player_id,
     name: record.display_name || 'Goblin',
@@ -412,56 +415,160 @@ function normalizeLeaderboardRow(record) {
     losses,
     draws,
     matchesPlayed,
+    rating,
     winRate: matchesPlayed ? Math.round((wins / matchesPlayed) * 100) : 0,
+    type,
   };
 }
-function sortLeaderboardRows(rows) {
+function sortLeaderboardRows(rows, type = 'daily') {
+  if (type === 'rating') {
+    rows.sort((a, b) => b.rating - a.rating || b.wins - a.wins || a.losses - b.losses || a.name.localeCompare(b.name));
+    return rows;
+  }
   rows.sort((a, b) => b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.draws - a.draws || a.name.localeCompare(b.name));
   return rows;
 }
-async function loadLeaderboard({ silent = false } = {}) {
+function setLeaderboardStatus(type, value) {
+  state.leaderboardStatus = { ...state.leaderboardStatus, [type]: value };
+}
+function setLeaderboardRows(type, rows) {
+  state.leaderboard = { ...state.leaderboard, [type]: rows };
+}
+function shouldRenderLeaderboard(type, silent) {
+  return !silent && state.screen === 'leaderboard' && Boolean(type);
+}
+async function loadDailyLeaderboard({ silent = false } = {}) {
   const dayBucket = getCurrentLeaderboardDayBucket();
-  console.info('[leaderboard] load start', {
-    playerId: state.me?.id || null,
-    dayBucket,
-    silent,
-  });
-  state.leaderboardStatus = 'loading';
-  if (!silent) render();
+  console.info('[leaderboard] daily load start', { playerId: state.me?.id || null, dayBucket, silent });
+  setLeaderboardStatus('daily', 'loading');
+  if (shouldRenderLeaderboard('daily', silent)) render();
   if (!isBackendConfigured()) {
-    console.warn('[leaderboard] load skipped: backend not configured', {
-      playerId: state.me?.id || null,
-      dayBucket,
-    });
-    state.leaderboard = [];
-    state.leaderboardStatus = 'ready';
-    if (!silent) render();
+    console.warn('[leaderboard] daily load skipped: backend not configured', { playerId: state.me?.id || null, dayBucket });
+    setLeaderboardRows('daily', []);
+    setLeaderboardStatus('daily', 'ready');
+    if (shouldRenderLeaderboard('daily', silent)) render();
     return [];
   }
   try {
     const rows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&select=player_id,display_name,wins,losses,draws,matches_played&order=wins.desc,draws.desc,losses.asc,display_name.asc`, { method: 'GET', prefer: undefined });
-    console.info('[leaderboard] load success', {
-      playerId: state.me?.id || null,
-      dayBucket,
-      rowCount: Array.isArray(rows) ? rows.length : 0,
-      rows,
-    });
-    state.leaderboard = sortLeaderboardRows((rows || []).map(normalizeLeaderboardRow));
-    state.leaderboardStatus = 'ready';
-    return state.leaderboard;
+    const normalized = sortLeaderboardRows((rows || []).map((row) => normalizeLeaderboardRow(row, 'daily')), 'daily');
+    setLeaderboardRows('daily', normalized);
+    setLeaderboardStatus('daily', 'ready');
+    return normalized;
   } catch (error) {
-    console.error('[leaderboard] load failed', {
-      playerId: state.me?.id || null,
-      dayBucket,
-      error: error?.message || error,
-    });
-    state.leaderboard = [];
-    state.leaderboardStatus = 'error';
+    console.error('[leaderboard] daily load failed', { playerId: state.me?.id || null, dayBucket, error: error?.message || error });
+    setLeaderboardRows('daily', []);
+    setLeaderboardStatus('daily', 'error');
     return [];
   } finally {
-    render();
+    if (shouldRenderLeaderboard('daily', silent)) render();
   }
 }
+async function loadRatingLeaderboard({ silent = false } = {}) {
+  console.info('[leaderboard] rating load start', { playerId: state.me?.id || null, silent });
+  setLeaderboardStatus('rating', 'loading');
+  if (shouldRenderLeaderboard('rating', silent)) render();
+  if (!isBackendConfigured()) {
+    console.warn('[leaderboard] rating load skipped: backend not configured', { playerId: state.me?.id || null });
+    setLeaderboardRows('rating', []);
+    setLeaderboardStatus('rating', 'ready');
+    if (shouldRenderLeaderboard('rating', silent)) render();
+    return [];
+  }
+  try {
+    const rows = await supabaseRequest('ff_lite_player_ratings?select=player_id,display_name,rating,wins,losses,draws,matches_played,updated_at&order=rating.desc,wins.desc,losses.asc,display_name.asc', { method: 'GET', prefer: undefined });
+    const normalized = sortLeaderboardRows((rows || []).map((row) => normalizeLeaderboardRow(row, 'rating')), 'rating');
+    setLeaderboardRows('rating', normalized);
+    setLeaderboardStatus('rating', 'ready');
+    return normalized;
+  } catch (error) {
+    console.error('[leaderboard] rating load failed', { playerId: state.me?.id || null, error: error?.message || error });
+    setLeaderboardRows('rating', []);
+    setLeaderboardStatus('rating', 'error');
+    return [];
+  } finally {
+    if (shouldRenderLeaderboard('rating', silent)) render();
+  }
+}
+async function loadLeaderboard(options = {}) {
+  const [daily, rating] = await Promise.all([
+    loadDailyLeaderboard(options),
+    loadRatingLeaderboard(options),
+  ]);
+  return { daily, rating };
+}
+function getExpectedEloScore(ratingA, ratingB) {
+  return 1 / (1 + 10 ** ((ratingB - ratingA) / 400));
+}
+function calculateEloRatings(ratingA, ratingB, scoreA, scoreB, kFactor = ELO_K_FACTOR) {
+  const expectedA = getExpectedEloScore(ratingA, ratingB);
+  const expectedB = getExpectedEloScore(ratingB, ratingA);
+  return {
+    expectedA,
+    expectedB,
+    newRatingA: Math.round(ratingA + kFactor * (scoreA - expectedA)),
+    newRatingB: Math.round(ratingB + kFactor * (scoreB - expectedB)),
+  };
+}
+async function getPlayerRatingRecord(playerId) {
+  if (!playerId || !isBackendConfigured()) return null;
+  const rows = await supabaseRequest(`ff_lite_player_ratings?player_id=eq.${encodeURIComponent(playerId)}&select=*`, { method: 'GET', prefer: undefined });
+  return rows?.[0] || null;
+}
+async function upsertPlayerRating(player, updates) {
+  if (!player?.id || !isBackendConfigured()) return null;
+  const payload = {
+    player_id: player.id,
+    display_name: player.name,
+    rating: Math.round(Number(updates.rating ?? INITIAL_RATING)),
+    wins: Number(updates.wins || 0),
+    losses: Number(updates.losses || 0),
+    draws: Number(updates.draws || 0),
+    matches_played: Number(updates.matchesPlayed || 0),
+    updated_at: new Date().toISOString(),
+  };
+  return supabaseRequest('ff_lite_player_ratings?on_conflict=player_id', {
+    method: 'POST',
+    body: payload,
+    prefer: 'resolution=merge-duplicates,return=representation',
+  });
+}
+async function updateGlobalRatingsForResult(playerA, playerB, result) {
+  if (!playerA?.id || !playerB?.id) return null;
+  const [currentA, currentB] = await Promise.all([
+    getPlayerRatingRecord(playerA.id),
+    getPlayerRatingRecord(playerB.id),
+  ]);
+  const ratingA = Number(currentA?.rating || INITIAL_RATING);
+  const ratingB = Number(currentB?.rating || INITIAL_RATING);
+  const scoreA = result === 'A' ? 1 : result === 'draw' ? 0.5 : 0;
+  const scoreB = result === 'B' ? 1 : result === 'draw' ? 0.5 : 0;
+  // Standard Elo update: expected score depends on the rating gap, then each player moves by K * (actual - expected).
+  const nextRatings = calculateEloRatings(ratingA, ratingB, scoreA, scoreB);
+  const nextA = {
+    rating: nextRatings.newRatingA,
+    wins: Number(currentA?.wins || 0) + (result === 'A' ? 1 : 0),
+    losses: Number(currentA?.losses || 0) + (result === 'B' ? 1 : 0),
+    draws: Number(currentA?.draws || 0) + (result === 'draw' ? 1 : 0),
+    matchesPlayed: Number(currentA?.matches_played || 0) + 1,
+  };
+  const nextB = {
+    rating: nextRatings.newRatingB,
+    wins: Number(currentB?.wins || 0) + (result === 'B' ? 1 : 0),
+    losses: Number(currentB?.losses || 0) + (result === 'A' ? 1 : 0),
+    draws: Number(currentB?.draws || 0) + (result === 'draw' ? 1 : 0),
+    matchesPlayed: Number(currentB?.matches_played || 0) + 1,
+  };
+  await Promise.all([
+    upsertPlayerRating(playerA, nextA),
+    upsertPlayerRating(playerB, nextB),
+  ]);
+  return {
+    playerA: { previous: ratingA, next: nextRatings.newRatingA, expected: nextRatings.expectedA },
+    playerB: { previous: ratingB, next: nextRatings.newRatingB, expected: nextRatings.expectedB },
+  };
+}
+
 async function upsertDailyStat(player, increments) {
   if (!player?.id || !isBackendConfigured()) {
     console.warn('[leaderboard] upsert skipped', {
@@ -1023,7 +1130,13 @@ function updateMatchUI() {
   const turnLabel = document.querySelector('[data-turn-counter]');
   if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
-  if (logPanel) logPanel.innerHTML = state.logs.map((line) => `<p class="log-line">${line}</p>`).join('');
+  if (logPanel) {
+    const nextMarkup = state.logs.map((line) => `<p class="log-line">${line}</p>`).join('');
+    if (logPanel.dataset.lastMarkup !== nextMarkup) {
+      logPanel.innerHTML = nextMarkup;
+      logPanel.dataset.lastMarkup = nextMarkup;
+    }
+  }
   refreshAudioControlsUI();
 }
 function logLine(text) {
@@ -1085,11 +1198,15 @@ async function updateLeaderboardForResult(winner, loser, draw = false) {
         upsertDailyStat(loser, { losses: 1, matchesPlayed: 1 }),
       ]);
     }
+    const result = draw ? 'draw' : winner?.slot === 'A' ? 'A' : 'B';
+    await updateGlobalRatingsForResult(playerA, playerB, result);
     await loadLeaderboard({ silent: state.screen !== 'leaderboard' });
     return true;
   } catch (error) {
-    state.leaderboard = [];
-    state.leaderboardStatus = 'error';
+    setLeaderboardRows('daily', []);
+    setLeaderboardRows('rating', []);
+    setLeaderboardStatus('daily', 'error');
+    setLeaderboardStatus('rating', 'error');
     console.error('[leaderboard] update result failed', {
       currentPlayerId: state.me?.id || null,
       fighter0Id: state.match.fighters?.[0]?.id || null,
@@ -1145,10 +1262,12 @@ function setAllFighterStates(animation) {
   if (!state.match || !animation) return;
   state.match.fighters.forEach((_, index) => setFighterState(index, animation));
 }
-function restoreMatchAnimators() {
+function restoreMatchAnimators({ force = false } = {}) {
   if (!state.match?.animators?.length) return;
   state.match.animators.forEach((animator, index) => {
-    animator.play(state.match.fighters[index]?.state || 'idle');
+    const fighterState = state.match.fighters[index]?.state || 'idle';
+    if (!force && animator.current?.stateName === fighterState) return;
+    animator.play(fighterState);
   });
 }
 async function runMatchAction(action) {
@@ -1316,6 +1435,7 @@ async function finishMatch() {
   }
   state.screen = 'postmatch';
   render();
+  restoreMatchAnimators({ force: true });
   syncSharedMatchResult();
 }
 
@@ -1520,24 +1640,62 @@ function renderMatchOrPost() {
       </div>
     </section>`;
 }
+function renderLeaderboardRows(rows, type) {
+  return rows.map((row, index) => {
+    const rank = index + 1;
+    const isTopThree = rank <= 3;
+    const badge = rank === 1 ? 'Crown' : rank === 2 ? 'Silver' : rank === 3 ? 'Bronze' : null;
+    const primaryValue = type === 'rating'
+      ? `<div class="leaderboard-score">${row.rating}<span>rating</span></div>`
+      : `<div class="leaderboard-score">${row.wins}<span>wins</span></div>`;
+    return `<article class="leaderboard-entry ${isTopThree ? `podium podium-${rank}` : ''}">
+      <div class="leaderboard-rank-wrap">
+        <div class="leaderboard-rank">#${rank}</div>
+        ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
+      </div>
+      <div class="leaderboard-main">
+        <div class="leaderboard-name">${row.name}</div>
+        <div class="leaderboard-stats">
+          <span>W ${row.wins}</span><span>L ${row.losses}</span><span>D ${row.draws}</span><span>${row.matchesPlayed} match</span><span>${row.winRate}% WR</span>
+        </div>
+      </div>
+      ${primaryValue}
+    </article>`;
+  }).join('');
+}
+function renderLeaderboardSection(title, description, rows, status, type) {
+  const message = status === 'loading'
+    ? 'Caricamento…'
+    : status === 'error'
+      ? 'Impossibile caricare questa classifica.'
+      : 'Nessun risultato disponibile.';
+  return `<section class="leaderboard-section leaderboard-section-${type}">
+    <div class="leaderboard-section-head">
+      <div>
+        <p class="leaderboard-kicker">${type === 'daily' ? 'Daily board' : 'Global ladder'}</p>
+        <h2>${title}</h2>
+      </div>
+      <p class="muted">${description}</p>
+    </div>
+    <div class="leaderboard-list">
+      ${rows.length ? renderLeaderboardRows(rows, type) : `<div class="leaderboard-empty">${message}</div>`}
+    </div>
+  </section>`;
+}
 function renderLeaderboard() {
-  const leaderboardMessage = state.leaderboardStatus === 'loading'
-    ? 'Caricamento classifica…'
-    : state.leaderboardStatus === 'error'
-      ? 'Errore nel caricamento della classifica giornaliera.'
-      : 'Nessun risultato ancora per oggi.';
   return `
     <section class="panel leaderboard-layout">
-      <div>
-        <h1 class="screen-title">Leaderboard</h1>
-        <p class="muted">Classifica giornaliera Lite basata sul bucket data corrente (${LEADERBOARD_DAY_TIMEZONE}).</p>
+      <div class="leaderboard-header">
+        <div>
+          <h1 class="screen-title">Leaderboard</h1>
+          <p class="muted">Progressi giornalieri separati dalla classifica Elo globale.</p>
+        </div>
+        <div class="badge">UTC daily bucket · live sync</div>
       </div>
-      <table class="table">
-        <thead><tr><th>Player</th><th>Wins</th><th>Losses</th><th>Draws</th><th>Matches</th><th>Win rate</th></tr></thead>
-        <tbody>
-          ${state.leaderboard.length ? state.leaderboard.map((row) => `<tr><td>${row.name}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.draws}</td><td>${row.matchesPlayed}</td><td>${row.winRate}%</td></tr>`).join('') : `<tr><td colspan="6">${leaderboardMessage}</td></tr>`}
-        </tbody>
-      </table>
+      <div class="leaderboard-columns">
+        ${renderLeaderboardSection('Daily leaderboard', `Risultati del giorno (${LEADERBOARD_DAY_TIMEZONE}).`, state.leaderboard.daily, state.leaderboardStatus.daily, 'daily')}
+        ${renderLeaderboardSection('Global rating leaderboard', 'Rating persistente con Elo iniziale 1000.', state.leaderboard.rating, state.leaderboardStatus.rating, 'rating')}
+      </div>
     </section>`;
 }
 function render() {
@@ -1583,7 +1741,7 @@ function render() {
     refreshAudioControlsUI();
   });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
-  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; loadLeaderboard(); audioManager.syncHomePlayback(); render(); });
+  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; audioManager.syncHomePlayback(); render(); loadLeaderboard(); });
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(state.pendingMatch.link);
@@ -1593,7 +1751,7 @@ function render() {
     }
   });
   document.getElementById('post-home')?.addEventListener('click', resetToHome);
-  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; loadLeaderboard(); audioManager.syncHomePlayback(); render(); });
+  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; audioManager.syncHomePlayback(); render(); loadLeaderboard(); });
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
     const variantIndex = Number(node.dataset.variantIndex);
@@ -1607,12 +1765,19 @@ function render() {
   if (state.screen === 'match' || state.screen === 'postmatch') {
     const nodes = [...document.querySelectorAll('[data-animator]')];
     const previous = state.match.animators || [];
-    previous.forEach((animator) => animator.stop());
-    state.match.animators = nodes.map((node, index) => new SpriteSheetAnimator(node, {
+    const canReuse = previous.length === nodes.length;
+    state.match.animators = nodes.map((node, index) => {
+      const existing = canReuse ? previous[index] : null;
+      if (existing) {
+        existing.stop();
+      }
+      return new SpriteSheetAnimator(node, {
       flip: state.match.fighters[index].side === 'left' ? -1 : 1,
       variant: state.match.fighters[index].variant,
-    }));
-    restoreMatchAnimators();
+    });
+    });
+    previous.forEach((animator, index) => { if (!canReuse || !state.match.animators[index]) animator.stop(); });
+    restoreMatchAnimators({ force: true });
   }
 
   refreshAudioControlsUI();
