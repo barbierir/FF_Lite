@@ -564,26 +564,26 @@ button:disabled { opacity: 0.6; cursor: default; }
   margin-top: 6px;
   display: grid;
   gap: 14px;
-  align-items: stretch;
-  justify-items: stretch;
-  width: 100%;
-  max-width: 680px;
+  align-items: start;
+  justify-items: start;
+  width: min(100%, 580px);
+  max-width: 580px;
   margin-right: auto;
   min-width: 0;
 }
-.challenge-card > * {
-  width: 100%;
-  min-width: 0;
-}
 .challenge-card .section-heading,
-.challenge-card .share-link-row,
 .challenge-card .status-chip-row,
 .challenge-card .copy-feedback,
 .challenge-card-text {
-  width: 100%;
+  min-width: 0;
 }
 .challenge-card .section-heading {
   align-items: start;
+}
+.challenge-card .share-link-row {
+  width: min(100%, 480px);
+  max-width: 100%;
+  align-self: start;
 }
 .challenge-card .status-chip-row {
   justify-content: flex-start;
@@ -719,8 +719,8 @@ button:disabled { opacity: 0.6; cursor: default; }
   display: flex;
   align-items: stretch;
   gap: 12px;
-  width: 100%;
-  max-width: 100%;
+  width: fit-content;
+  max-width: min(100%, 560px);
   padding: 12px;
   min-width: 0;
   background: linear-gradient(180deg, rgba(255,255,250,0.98), rgba(236, 247, 223, 0.95));
@@ -732,7 +732,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 .share-link-input {
   appearance: none;
   -webkit-appearance: none;
-  flex: 1 1 260px;
+  flex: 0 1 260px;
+  width: clamp(220px, 24vw, 320px);
   min-width: 0;
   min-height: 56px;
   height: 56px;
@@ -1631,16 +1632,26 @@ button:disabled { opacity: 0.6; cursor: default; }
   .topbar-nav { width: 100%; justify-content: stretch; }
   .topbar-nav .nav-pill { flex: 1 1 calc(50% - 8px); }
   .audio-controls { width: 100%; justify-content: center; }
+  .challenge-card {
+    width: 100%;
+    max-width: 100%;
+  }
+  .challenge-card .share-link-row {
+    width: 100%;
+  }
   .share-link-row {
     flex-direction: column;
     gap: 12px;
     padding: 16px;
+    width: 100%;
+    max-width: 100%;
   }
   .share-link-input,
   .share-link-copy {
     min-height: 54px;
   }
   .share-link-input {
+    width: 100%;
     height: 54px;
   }
   .share-link-copy {
