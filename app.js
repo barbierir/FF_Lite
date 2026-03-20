@@ -1126,6 +1126,12 @@ function resetToHome() {
   audioManager.syncHomePlayback();
   render();
 }
+function showLeaderboardScreen() {
+  state.screen = 'leaderboard';
+  audioManager.syncHomePlayback();
+  render();
+  loadLeaderboard();
+}
 async function startCreateFlow() {
   clearRuntimeMatchState();
   state.booting = false;
@@ -2019,7 +2025,7 @@ function render() {
     refreshAudioControlsUI();
   });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
-  document.getElementById('nav-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; audioManager.syncHomePlayback(); render(); loadLeaderboard(); });
+  document.getElementById('nav-leaderboard')?.addEventListener('click', showLeaderboardScreen);
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(state.pendingMatch.link);
@@ -2029,7 +2035,7 @@ function render() {
     }
   });
   document.getElementById('post-home')?.addEventListener('click', resetToHome);
-  document.getElementById('post-leaderboard')?.addEventListener('click', () => { state.screen = 'leaderboard'; audioManager.syncHomePlayback(); render(); loadLeaderboard(); });
+  document.getElementById('post-leaderboard')?.addEventListener('click', showLeaderboardScreen);
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
     const variantIndex = Number(node.dataset.variantIndex);
