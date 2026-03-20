@@ -91,6 +91,7 @@ const state = {
   leaderboardStatus: 'idle',
   previewAnimators: [],
   pendingStartTimer: null,
+  pendingStartTimerMatchId: null,
   activeMatchSubscription: null,
   homeView: 'default',
   loading: false,
@@ -705,6 +706,13 @@ function clearPendingStartTimer() {
     window.clearTimeout(state.pendingStartTimer);
     state.pendingStartTimer = null;
   }
+  state.pendingStartTimerMatchId = null;
+}
+function clearRuntimeMatchState({ clearWatcher = false } = {}) {
+  clearPendingStartTimer();
+  if (clearWatcher) clearMatchWatcher();
+  state.match = null;
+  state.logs = [];
 }
 function setError(message) {
   state.loading = false;
@@ -799,12 +807,9 @@ function parseJoinMatchId() {
 }
 function resetToHome() {
   window.history.replaceState({}, '', window.location.pathname);
-  clearPendingStartTimer();
-  clearMatchWatcher();
+  clearRuntimeMatchState({ clearWatcher: true });
   state.pendingMatch = null;
-  state.match = null;
   state.homeView = 'default';
-  state.logs = [];
   state.loading = false;
   state.errorMessage = '';
   state.screen = 'home';
@@ -812,8 +817,10 @@ function resetToHome() {
   render();
 }
 async function startCreateFlow() {
+  clearRuntimeMatchState();
   state.loading = true;
   state.errorMessage = '';
+  state.screen = 'home';
   render();
   try {
     const payload = makeMatchPayload();
@@ -863,10 +870,32 @@ async function startJoinedFlow(matchId) {
   }
 }
 function queueMatchStart(payload) {
-  if (state.match || state.screen === 'match' || state.screen === 'postmatch' || state.pendingStartTimer) return;
+  if (!payload?.id) return;
+  const runningMatchId = state.match?.id;
+  const queuedMatchId = state.pendingStartTimerMatchId;
+  const sameMatchRunning = runningMatchId === payload.id && (state.screen === 'match' || state.screen === 'postmatch');
+  const sameMatchQueued = queuedMatchId === payload.id && state.pendingStartTimer;
+  if (sameMatchRunning || sameMatchQueued) return;
+  if (state.pendingStartTimer && queuedMatchId !== payload.id) clearPendingStartTimer();
+  if (state.match && runningMatchId !== payload.id) {
+    state.match = null;
+    state.logs = [];
+  }
+  if (state.screen === 'postmatch' || (state.screen === 'match' && runningMatchId !== payload.id)) {
+    state.screen = 'home';
+  }
+  state.pendingStartTimerMatchId = payload.id;
   state.pendingStartTimer = window.setTimeout(() => {
+    const queuedId = state.pendingStartTimerMatchId;
     state.pendingStartTimer = null;
-    if (state.match || state.screen === 'match' || state.screen === 'postmatch') return;
+    state.pendingStartTimerMatchId = null;
+    if (queuedId !== payload.id) return;
+    const activeMatchId = state.match?.id;
+    if (activeMatchId === payload.id && (state.screen === 'match' || state.screen === 'postmatch')) return;
+    if (state.match && activeMatchId !== payload.id) {
+      state.match = null;
+      state.logs = [];
+    }
     state.screen = 'match';
     state.match = createResolvedMatch(payload);
     state.logs = ['I goblini si annusano con sospetto...'];
