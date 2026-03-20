@@ -2076,19 +2076,22 @@ function renderHome() {
     { label: 'Fresh lobby', value: 'Share link', meta: 'Crea un match e mandalo in 1 tap.' },
   ];
   const leaderboardPreview = (state.leaderboard.rating?.length ? state.leaderboard.rating : state.leaderboard.daily).slice(0, 3);
+  const copyFeedbackMarkup = state.copyFeedback
+    ? `<div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>`
+    : '<div class="copy-feedback sr-only" aria-live="polite"></div>';
   const challengePanel = isChallengerView ? `
     <div class="world-card challenge-card challenge-card-active card-lift">
       <div class="section-heading compact">
         <span class="section-kicker">Lobby live</span>
         <h3>Challenge link pronto</h3>
       </div>
-      <p class="muted">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
+      <p class="muted challenge-card-text">Sei il challenger: la lobby resta agganciata a questa home finché il player B non entra.</p>
       <div class="link-box">
         ${renderLinkField(state.pendingMatch.link)}
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
-      <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
-      <p class="muted">${challengerStatus}</p>
+      ${copyFeedbackMarkup}
+      <p class="muted challenge-card-text">${challengerStatus}</p>
       <div class="status-chip-row">
         <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
         <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
@@ -2099,13 +2102,13 @@ function renderHome() {
         <span class="section-kicker">Share challenge</span>
         <h3>Link pronto per lo scontro</h3>
       </div>
-      <p class="muted">Crea il match senza lasciare la home, poi manda il link al player B.</p>
+      <p class="muted challenge-card-text">Crea il match senza lasciare la home, poi manda il link al player B.</p>
       <div class="link-box">
         ${renderLinkField(state.pendingMatch.link)}
         <button id="copy-link" class="btn-primary btn-bounce">Copia link</button>
       </div>
-      <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
-      <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
+      ${copyFeedbackMarkup}
+      <p class="muted challenge-card-text">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
     </div>` : `
     <div class="hero-cta-block cta-alive card-lift">
       <div class="inline-actions hero-actions">
