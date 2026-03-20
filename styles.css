@@ -149,6 +149,9 @@ a { color: #fde68a; }
   gap: 14px;
   justify-items: center;
 }
+.home-preview {
+  gap: 10px;
+}
 .goblin-frame {
   width: min(100%, 320px);
   aspect-ratio: 1;
@@ -159,6 +162,10 @@ a { color: #fde68a; }
   overflow: hidden;
   border: 1px solid rgba(255,255,255,0.12);
   background: linear-gradient(180deg, rgba(250, 204, 21, 0.08), rgba(0,0,0,0.28));
+}
+.home-preview .goblin-frame {
+  width: min(100%, 260px);
+  border-radius: 24px;
 }
 .sprite-render-home .sprite-canvas,
 .sprite-render-home .sprite-fallback {

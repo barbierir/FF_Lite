@@ -1464,7 +1464,7 @@ function renderHome() {
   return `
     <section class="panel hero">
       <div class="hero-copy">
-        <h1>Fart & Furious Lite</h1>
+        <h1>Fart & Furious</h1>
         ${isChallengerView ? `
           <div class="info-card challenge-card">
             <strong>Challenge link pronto</strong>
@@ -1493,10 +1493,10 @@ function renderHome() {
             <p class="muted">${state.pendingMatch.opponentJoined ? 'Avversario trovato: il match partirà da solo.' : 'In attesa che il player B apra il link.'}</p>
           </div>` : `
           <div class="inline-actions">
-            <button class="secondary" id="home-create">Crea challenge link</button>
+            <button class="secondary" id="home-create">Crea match</button>
           </div>`}
       </div>
-      <div class="goblin-preview">
+      <div class="goblin-preview home-preview">
         ${renderAnimatedPreview('home', state.me.variantIndex)}
         <div class="nameplate">${state.me.name}</div>
         ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
@@ -1707,7 +1707,7 @@ function render() {
     <main class="app-shell">
       <nav class="topbar">
         <button id="nav-home">Home</button>
-        <button class="secondary" id="nav-create">Crea match</button>
+        ${state.screen === 'home' ? '' : '<button class="secondary" id="nav-create">Crea match</button>'}
         <button class="ghost" id="nav-leaderboard">Leaderboard</button>
         <div class="audio-controls" aria-label="Audio controls">
           <button class="ghost audio-toggle" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
