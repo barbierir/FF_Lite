@@ -562,6 +562,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 .challenge-card {
   margin-top: 6px;
+  padding: 20px;
   display: grid;
   gap: 14px;
   align-items: start;
