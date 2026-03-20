@@ -26,7 +26,7 @@ const ACTION_VARIANT_COUNTS = {
 const HOME_IMAGE = 'assets/goblin/idle_choose.png';
 const HOME_ANIMATION = { src: HOME_IMAGE, rows: 4, cols: 4, loop: true, frameDuration: 150 };
 const ARENA_BACKGROUND = '/images/match_bg.png'; // Placeholder image path: replace/add the real arena background manually later.
-const GLOBAL_HEADER_BACKGROUND = '/images/match_bg.png';
+const GLOBAL_HEADER_BACKGROUND = '/images/header.jpg';
 const AUDIO_CONFIG = {
   bgm: {
     src: '/audio/bgm.mp3', // Placeholder audio path: replace/add the real looping BGM manually later.
