@@ -90,6 +90,7 @@ const state = {
   previewAnimators: [],
   pendingStartTimer: null,
   activeMatchSubscription: null,
+  homeView: 'default',
   loading: false,
   errorMessage: '',
 };
@@ -639,13 +640,18 @@ function watchSharedMatch(matchId, onChange) {
 }
 function setPendingMatchState(nextPendingMatch) {
   state.pendingMatch = nextPendingMatch;
+  if (!nextPendingMatch) {
+    state.homeView = 'default';
+  } else if (nextPendingMatch.role === 'challenger') {
+    state.homeView = 'challenger';
+  }
   const matchId = nextPendingMatch?.payload?.id;
   if (!matchId) {
     clearMatchWatcher();
     return;
   }
   watchSharedMatch(matchId, (sharedMatch) => {
-    if (!sharedMatch || (state.screen !== 'home' && state.screen !== 'create')) return;
+    if (!sharedMatch || !state.pendingMatch || (state.screen !== 'home' && state.screen !== 'create')) return;
     if (sharedMatch.status === 'active' && sharedMatch.playerB) {
       const nextPayload = {
         ...state.pendingMatch.payload,
@@ -701,6 +707,7 @@ function resetToHome() {
   clearMatchWatcher();
   state.pendingMatch = null;
   state.match = null;
+  state.homeView = 'default';
   state.logs = [];
   state.loading = false;
   state.errorMessage = '';
@@ -715,7 +722,12 @@ async function startCreateFlow() {
   try {
     const payload = makeMatchPayload();
     const sharedMatch = await createSharedMatch(payload);
-    setPendingMatchState({ payload: sharedMatch, link: getJoinLink(sharedMatch.id), opponentJoined: false });
+    setPendingMatchState({
+      role: 'challenger',
+      payload: sharedMatch,
+      link: getJoinLink(sharedMatch.id),
+      opponentJoined: false,
+    });
     state.screen = 'home';
     state.loading = false;
     bgmManager.sync();
@@ -1026,11 +1038,32 @@ function renderStatusCard(title, body) {
 }
 
 function renderHome() {
+  const isChallengerView = state.homeView === 'challenger' && state.pendingMatch?.payload?.playerA?.id === state.me.id;
+  const challengerStatus = state.pendingMatch?.opponentJoined
+    ? 'Avversario trovato: il match partirà da solo.'
+    : 'In attesa che il player B apra il link.';
   return `
     <section class="panel hero">
       <div class="hero-copy">
         <h1>Fart & Furious Lite</h1>
-        ${state.pendingMatch ? `
+        ${isChallengerView ? `
+          <div class="info-card challenge-card">
+            <strong>Challenge link pronto</strong>
+            <p class="muted">Sei il challenger: il match condiviso è già stato creato e questa home ora resta agganciata alla lobby finché il player B non entra.</p>
+            <div class="link-box">
+              <code>${state.pendingMatch.link}</code>
+              <button id="copy-link">Copia link</button>
+            </div>
+            <p class="muted">${challengerStatus}</p>
+            <div class="card-grid">
+              <div class="info-card">
+                <strong>Stato</strong><br/>${state.pendingMatch.payload.status === 'active' ? 'Match attivo' : 'In attesa di join'}
+              </div>
+              <div class="info-card">
+                <strong>Player B</strong><br/>${state.pendingMatch.payload.playerB?.name || 'Nessuno ancora'}
+              </div>
+            </div>
+          </div>` : state.pendingMatch ? `
           <div class="info-card challenge-card">
             <strong>Challenge link pronto</strong>
             <p class="muted">Crea il match condiviso senza lasciare la home, poi copia il link per il player B.</p>
@@ -1047,6 +1080,7 @@ function renderHome() {
       <div class="goblin-preview">
         ${renderAnimatedPreview('home', state.me.variantIndex)}
         <div class="nameplate">${state.me.name}</div>
+        ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
       </div>
     </section>`;
 }
