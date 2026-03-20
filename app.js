@@ -94,6 +94,18 @@ const MATCH_SOUND_OFFSETS = {
   matchStart: 0,
   matchEnd: 0,
 };
+const COMBAT_EFFECT_DURATIONS = {
+  actor: 340,
+  attack: 280,
+  charge: 260,
+  hit: 210,
+  backfire: 320,
+  hp: 260,
+  badge: 240,
+  victory: 700,
+  defeat: 520,
+  result: 420,
+};
 
 const state = {
   screen: 'home',
@@ -112,6 +124,7 @@ const state = {
   booting: false,
   errorMessage: '',
   copyFeedback: '',
+  reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false,
 };
 
 function normalizeAnimationAction(action) {
@@ -1259,21 +1272,26 @@ function updateMatchUI() {
     const fill = document.querySelector(`[data-hp="${index}"]`);
     const label = document.querySelector(`[data-hp-label="${index}"]`);
     const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
-    const stateLabel = fighterNode?.querySelector('.fighter-state');
+    const stateLabel = document.querySelector(`[data-fighter-state="${index}"]`);
+    const previousHp = Number(fighterNode?.dataset.hp ?? fighter.hp);
+    const hpDelta = fighter.hp - previousHp;
     if (fill) fill.style.setProperty('--hp', `${fighter.hp}%`);
     if (label) label.textContent = `HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}`;
     if (stateLabel) stateLabel.textContent = fighter.state || 'idle';
+    if (fighterNode) fighterNode.dataset.hp = String(fighter.hp);
+    if (hpDelta) triggerHpChangeEffect(index, hpDelta);
   });
   const turnLabel = document.querySelector('[data-turn-counter]');
   if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
   if (logPanel) {
-    const nextMarkup = state.logs.map((line) => `<p class="log-line">${line}</p>`).join('');
+    const nextMarkup = state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">0${index + 1}</span>${line}</p>`).join('');
     if (logPanel.dataset.lastMarkup !== nextMarkup) {
       logPanel.innerHTML = nextMarkup;
       logPanel.dataset.lastMarkup = nextMarkup;
     }
   }
+  if (state.screen === 'postmatch') triggerResultEffects();
   refreshAudioControlsUI();
 }
 function logLine(text) {
@@ -1385,6 +1403,16 @@ async function syncSharedMatchResult() {
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
+function bindReducedMotionPreference() {
+  const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  if (!media) return;
+  const syncPreference = () => {
+    state.reducedMotion = media.matches;
+  };
+  syncPreference();
+  if (typeof media.addEventListener === 'function') media.addEventListener('change', syncPreference);
+  else if (typeof media.addListener === 'function') media.addListener(syncPreference);
+}
 function triggerTemporaryClass(target, className, duration = 260) {
   if (!target) return;
   target.classList.remove(className);
@@ -1396,6 +1424,41 @@ function triggerFighterEffect(index, className, duration = 260) {
   const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
   if (!fighterNode) return;
   triggerTemporaryClass(fighterNode, className, duration);
+}
+function triggerActorCue(index, className, duration = COMBAT_EFFECT_DURATIONS.actor) {
+  if (!Number.isInteger(index)) return;
+  triggerFighterEffect(index, 'is-active-turn', duration);
+  triggerTemporaryClass(document.querySelector(`[data-fighter-header="${index}"]`), 'badge-pop', COMBAT_EFFECT_DURATIONS.badge);
+  triggerTemporaryClass(document.querySelector(`[data-fighter-state="${index}"]`), 'badge-pop', COMBAT_EFFECT_DURATIONS.badge);
+  triggerTemporaryClass(document.querySelector('[data-turn-counter]'), 'badge-pop', COMBAT_EFFECT_DURATIONS.badge);
+  if (className) triggerFighterEffect(index, className, duration);
+}
+function triggerHpChangeEffect(index, delta) {
+  if (!Number.isInteger(index) || !delta) return;
+  const className = delta < 0 ? 'hp-flash-damage' : 'hp-flash-heal';
+  triggerFighterEffect(index, className, COMBAT_EFFECT_DURATIONS.hp);
+  triggerTemporaryClass(document.querySelector(`[data-hp-wrap="${index}"]`), className, COMBAT_EFFECT_DURATIONS.hp);
+}
+function triggerResultEffects() {
+  if (!state.match) return;
+  const resultBanner = document.querySelector('.result-banner');
+  if (resultBanner && resultBanner.dataset.revealed !== 'true') {
+    resultBanner.dataset.revealed = 'true';
+    triggerTemporaryClass(resultBanner, 'result-reveal', COMBAT_EFFECT_DURATIONS.result);
+  }
+  const finalLog = document.querySelector('#log-lines .log-line:first-child');
+  if (finalLog && finalLog.dataset.finale !== 'true') {
+    finalLog.dataset.finale = 'true';
+    triggerTemporaryClass(finalLog, 'log-finale', COMBAT_EFFECT_DURATIONS.result);
+  }
+  state.match.fighters.forEach((fighter, index) => {
+    if (!state.match.winner) return;
+    const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
+    if (!fighterNode || fighterNode.dataset.outcomeFx === 'true') return;
+    fighterNode.dataset.outcomeFx = 'true';
+    if (fighter.id === state.match.winner.id) triggerFighterEffect(index, 'combat-victory', COMBAT_EFFECT_DURATIONS.victory);
+    else triggerFighterEffect(index, 'combat-defeat', COMBAT_EFFECT_DURATIONS.defeat);
+  });
 }
 function attachButtonJuice(root = document) {
   root.querySelectorAll('button').forEach((button) => {
@@ -1480,11 +1543,32 @@ async function runMatchActionGroup(actions, totalDuration) {
       } else {
         playFighterAnimation(action.sourceIndex, action.animation);
         if (action.targetAnimation) playFighterAnimation(action.targetIndex, action.targetAnimation);
-        if (Number.isInteger(action.sourceIndex) && ['attack', 'backfire', 'recharge', 'victory'].includes(action.animation)) {
-          triggerFighterEffect(action.sourceIndex, 'is-acting', 320);
+        if (Number.isInteger(action.sourceIndex)) {
+          const sourceClass = action.animation === 'attack'
+            ? 'combat-pop'
+            : action.animation === 'backfire'
+              ? 'combat-backfire'
+              : action.animation === 'recharge'
+                ? 'combat-charge'
+                : action.animation === 'victory'
+                  ? 'combat-victory'
+                  : 'is-acting';
+          const sourceDuration = action.animation === 'backfire'
+            ? COMBAT_EFFECT_DURATIONS.backfire
+            : action.animation === 'recharge'
+              ? COMBAT_EFFECT_DURATIONS.charge
+              : action.animation === 'victory'
+                ? COMBAT_EFFECT_DURATIONS.victory
+                : COMBAT_EFFECT_DURATIONS.attack;
+          triggerActorCue(action.sourceIndex, sourceClass, sourceDuration);
         }
         if (Number.isInteger(action.targetIndex) && ['hit', 'defeat'].includes(action.targetAnimation || action.animation)) {
-          triggerFighterEffect(action.targetIndex, 'is-hit', 220);
+          const isDefeat = (action.targetAnimation || action.animation) === 'defeat';
+          triggerActorCue(
+            action.targetIndex,
+            isDefeat ? 'combat-defeat' : 'combat-hit',
+            isDefeat ? COMBAT_EFFECT_DURATIONS.defeat : COMBAT_EFFECT_DURATIONS.hit,
+          );
         }
       }
       updateMatchUI();
@@ -1910,11 +1994,11 @@ function renderMatchOrPost() {
           <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
           <div class="arena-floor" aria-hidden="true"></div>
           ${state.match.fighters.map((fighter, index) => `
-            <article class="fighter fighter-${fighter.side}" data-fighter="${index}">
-              <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}">
+            <article class="fighter fighter-${fighter.side}" data-fighter="${index}" data-hp="${fighter.hp}">
+              <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}" data-fighter-header="${index}">
                 <div class="fighter-label-row">
                   <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
-                  <span class="fighter-state">${fighter.state || 'idle'}</span>
+                  <span class="fighter-state" data-fighter-state="${index}">${fighter.state || 'idle'}</span>
                 </div>
                 <div class="nameplate">${fighter.name}</div>
                 <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · arena ready</div>
@@ -1927,7 +2011,7 @@ function renderMatchOrPost() {
                   </div>
                 </div>
               </div>
-              <div class="health-bar"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
+              <div class="health-bar" data-hp-wrap="${index}"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
             </article>`).join('')}
         </section>
       </div>
@@ -1938,7 +2022,7 @@ function renderMatchOrPost() {
             <span class="status-chip" data-live="true">Live feed</span>
           </div>
           <div id="log-lines" class="list-stagger">
-            ${state.logs.map((line, index) => `<p class="log-line"><span class="log-index">0${index + 1}</span>${line}</p>`).join('')}
+            ${state.logs.map((line, index) => `<p class="log-line log-entry-in" style="--log-delay:${Math.min(index, 3) * 26}ms"><span class="log-index">0${index + 1}</span>${line}</p>`).join('')}
           </div>
         </div>
         ${isPost ? `<div class="footer-actions"><button id="post-home" class="btn-primary btn-bounce">Home</button><button class="ghost btn-ghost btn-bounce" id="post-leaderboard">Leaderboard</button></div>` : ''}
@@ -2118,6 +2202,7 @@ function render() {
   refreshAudioControlsUI();
 }
 
+bindReducedMotionPreference();
 audioManager.initializeForHome();
 
 const joinMatchId = parseJoinMatchId();
