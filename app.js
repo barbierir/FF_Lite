@@ -550,10 +550,12 @@ async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) 
   if (!isBackendConfigured()) {
     throw new Error('Backend non configurato. Aggiungi supabaseUrl e supabaseAnonKey in ff.config.js.');
   }
+  const normalizedMethod = String(method || 'GET').toUpperCase();
   const response = await fetch(`${getBackendBaseUrl()}/rest/v1/${pathname}`, {
-    method,
+    method: normalizedMethod,
     headers: getBackendHeaders(prefer),
     body: body ? JSON.stringify(body) : undefined,
+    cache: normalizedMethod === 'GET' ? 'no-store' : 'default',
   });
   if (!response.ok) {
     const message = await response.text();
@@ -651,28 +653,27 @@ function setPendingMatchState(nextPendingMatch) {
     return;
   }
   watchSharedMatch(matchId, (sharedMatch) => {
-    if (!sharedMatch || !state.pendingMatch || (state.screen !== 'home' && state.screen !== 'create')) return;
+    const pendingMatch = state.pendingMatch;
+    if (!sharedMatch || !pendingMatch || pendingMatch.payload?.id !== matchId || sharedMatch.id !== matchId) return;
+    if (state.match || state.screen === 'match' || state.screen === 'postmatch') return;
     if (sharedMatch.status === 'active' && sharedMatch.playerB) {
-      const nextPayload = {
-        ...state.pendingMatch.payload,
-        status: 'active',
-        playerB: sharedMatch.playerB,
-        sharedState: sharedMatch.sharedState,
-      };
       state.pendingMatch = {
-        ...state.pendingMatch,
-        payload: nextPayload,
+        ...pendingMatch,
+        payload: sharedMatch,
         opponentJoined: true,
       };
-      queueMatchStart(nextPayload);
+      render();
+      queueMatchStart(sharedMatch);
       return;
     }
-    if (sharedMatch.playerB && !state.pendingMatch.opponentJoined) {
+    if (sharedMatch.playerB && (!pendingMatch.opponentJoined || pendingMatch.payload?.playerB?.id !== sharedMatch.playerB.id)) {
       state.pendingMatch = {
-        ...state.pendingMatch,
+        ...pendingMatch,
         payload: {
-          ...state.pendingMatch.payload,
+          ...pendingMatch.payload,
           playerB: sharedMatch.playerB,
+          status: sharedMatch.status,
+          sharedState: sharedMatch.sharedState,
         },
         opponentJoined: true,
       };
