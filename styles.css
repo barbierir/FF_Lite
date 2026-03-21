@@ -347,6 +347,49 @@ button:disabled { opacity: 0.6; cursor: default; }
   flex: 1;
   flex-wrap: wrap;
 }
+
+.creature-selector {
+  display: grid;
+  gap: 14px;
+}
+
+.selector-copy {
+  max-width: 38rem;
+}
+
+.creature-selector-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 12px;
+}
+
+.creature-option {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  width: 100%;
+  padding: 14px 12px;
+  text-align: center;
+  border: 2px solid rgba(33, 65, 42, 0.14);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f7f7f1, #e5eddc);
+}
+
+.creature-option.is-active,
+.creature-option:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: linear-gradient(180deg, #f6e7a6, #f4d35e);
+}
+
+.creature-option-preview .goblin-frame {
+  width: 84px;
+  height: 84px;
+  margin: 0 auto;
+}
+
+.creature-option-label {
+  font-weight: 800;
+}
 .brand-pill {
   display: inline-flex;
   align-items: center;
