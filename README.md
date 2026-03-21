@@ -4,14 +4,16 @@ Minimal static browser version of **Fart & Furious Lite**.
 
 ## Run locally
 
-Because this is a plain static app, you can run it with any simple file server.
+Because this is a plain static app, you can run it with any simple file server. The canonical
+local boot path is the root `index.html`, which loads `ff.config.js` and then the module
+bootstrap in `app.js`.
 
 Examples:
 
 ```bash
-python3 -m http.server 8000
+npm start
 # or
-npx serve .
+python3 -m http.server 8000
 ```
 
 Then open <http://localhost:8000>.

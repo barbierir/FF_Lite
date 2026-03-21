@@ -81,6 +81,14 @@ const LOG_EVENT_META = {
 };
 const INITIAL_RATING = 1000;
 const ELO_K_FACTOR = 24;
+const CREATURE_BONUS_POINT_CAP = 100;
+const CREATURE_BONUS_SCALE_MAX = 1000;
+const CREATURE_COMBAT_BONUS_KEYS = Object.freeze([
+  'backfireReduction',
+  'specialTriggerBonus',
+  'negativeEffectResistance',
+  'favorableActionBonus',
+]);
 const PALETTE_VARIANTS = [
   { hue: 0, sat: 1, bright: 1 },
   { hue: 20, sat: 1.1, bright: 1 },
@@ -627,10 +635,70 @@ function roll1000(rng = Math.random) {
 function clampOutOf1000(value) {
   return Math.max(0, Math.min(1000, Math.floor(value)));
 }
-// Developer note: future creature progression bonuses should stay in base-1000 threshold space
-// (for example +1 per 3 wins up to +100) and be added to threshold checks before rolling.
+// Developer note: permanent creature combat bonuses are integer points in base-1000 threshold
+// space, not legacy % / damage-band math. All bonuses are 0..100, apply before rolling, and are
+// intended only for threshold mechanics:
+// - backfireReduction lowers negative thresholds
+// - specialTriggerBonus raises positive thresholds
+// - negativeEffectResistance lowers incoming negative thresholds
+// - favorableActionBonus raises positive thresholds
 function applyProgressionBonusOutOf1000(baseThreshold, bonusOutOf1000 = 0) {
   return clampOutOf1000(baseThreshold + bonusOutOf1000);
+}
+function createCreatureCombatBonuses(overrides = {}) {
+  return clampCreatureCombatBonuses({
+    backfireReduction: 0,
+    specialTriggerBonus: 0,
+    negativeEffectResistance: 0,
+    favorableActionBonus: 0,
+    ...overrides,
+  });
+}
+function clampCreatureCombatBonusValue(value) {
+  if (!Number.isFinite(value)) return 0;
+  return clamp(Math.floor(value), 0, CREATURE_BONUS_POINT_CAP);
+}
+function clampCreatureCombatBonuses(bonuses = {}) {
+  return CREATURE_COMBAT_BONUS_KEYS.reduce((next, key) => {
+    next[key] = clampCreatureCombatBonusValue(bonuses[key]);
+    return next;
+  }, {});
+}
+function awardRandomCreatureCombatBonus(bonuses = {}, rng = Math.random) {
+  const nextBonuses = clampCreatureCombatBonuses(bonuses);
+  const availableKeys = CREATURE_COMBAT_BONUS_KEYS.filter((key) => nextBonuses[key] < CREATURE_BONUS_POINT_CAP);
+  if (!availableKeys.length) {
+    return {
+      bonuses: nextBonuses,
+      awardedKey: null,
+      awardedAmount: 0,
+      scaleMax: CREATURE_BONUS_SCALE_MAX,
+    };
+  }
+  const awardedKey = availableKeys[Math.floor(rng() * availableKeys.length)];
+  nextBonuses[awardedKey] = clampCreatureCombatBonusValue(nextBonuses[awardedKey] + 1);
+  return {
+    bonuses: nextBonuses,
+    awardedKey,
+    awardedAmount: 1,
+    scaleMax: CREATURE_BONUS_SCALE_MAX,
+  };
+}
+function awardCreatureBonusAtThreeWinMilestone(totalWins, bonuses = {}, rng = Math.random) {
+  const normalizedWins = Math.max(0, Math.floor(Number(totalWins) || 0));
+  if (normalizedWins === 0 || normalizedWins % 3 !== 0) {
+    return {
+      bonuses: clampCreatureCombatBonuses(bonuses),
+      awardedKey: null,
+      awardedAmount: 0,
+      milestoneReached: false,
+      scaleMax: CREATURE_BONUS_SCALE_MAX,
+    };
+  }
+  return {
+    ...awardRandomCreatureCombatBonus(bonuses, rng),
+    milestoneReached: true,
+  };
 }
 function succeeds(outOf1000, rng = Math.random) {
   return roll1000(rng) < clampOutOf1000(outOf1000);
@@ -776,6 +844,7 @@ function buildPlayerProfile(profile = {}) {
     creatureId,
     variantIndex,
     variant: PALETTE_VARIANTS[variantIndex],
+    permanentCombatBonuses: createCreatureCombatBonuses(profile.permanentCombatBonuses),
   };
 }
 function saveLocalPlayer(player = state.me) {
@@ -784,6 +853,7 @@ function saveLocalPlayer(player = state.me) {
     name: player.name,
     creatureId: player.creatureId,
     variantIndex: player.variantIndex,
+    permanentCombatBonuses: createCreatureCombatBonuses(player.permanentCombatBonuses),
   }));
 }
 function loadLocalPlayer() {
