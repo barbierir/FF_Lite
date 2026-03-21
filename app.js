@@ -621,10 +621,31 @@ function playResultSfx(type) {
   if (key) audioManager.playVariant(key);
 }
 
+function roll1000(rng = Math.random) {
+  return Math.floor(rng() * 1000);
+}
+function clampOutOf1000(value) {
+  return Math.max(0, Math.min(1000, Math.floor(value)));
+}
+// Developer note: future creature progression bonuses should stay in base-1000 threshold space
+// (for example +1 per 3 wins up to +100) and be added to threshold checks before rolling.
+function applyProgressionBonusOutOf1000(baseThreshold, bonusOutOf1000 = 0) {
+  return clampOutOf1000(baseThreshold + bonusOutOf1000);
+}
+function succeeds(outOf1000, rng = Math.random) {
+  return roll1000(rng) < clampOutOf1000(outOf1000);
+}
+function rollDieFrom1000(sides, rng = Math.random) {
+  return Math.floor((roll1000(rng) * sides) / 1000) + 1;
+}
+function rollRangeFrom1000(size, rng = Math.random) {
+  return Math.floor((roll1000(rng) * size) / 1000);
+}
 function randomInt(min, max) {
   const lower = Math.ceil(Math.min(min, max));
   const upper = Math.floor(Math.max(min, max));
-  return Math.floor(Math.random() * (upper - lower + 1)) + lower;
+  const size = upper - lower + 1;
+  return lower + rollRangeFrom1000(size);
 }
 function hashString(str) {
   let h = 2166136261;
@@ -1621,15 +1642,34 @@ function logLine(text) {
   if (state.match) state.match.sharedState = { ...(state.match.sharedState || {}), logs: [...state.logs] };
   updateMatchUI();
 }
+function createSeededCombatRng(seed) {
+  let stateSeed = seed >>> 0;
+  return () => {
+    stateSeed = hashString(String(stateSeed));
+    return stateSeed / 0x100000000;
+  };
+}
 function computeAction(attacker, defender, turn) {
   const seed = hashString(`${state.match.id}:${attacker.slot}:${turn}`);
-  const roll = seed % 100;
+  const combatRng = createSeededCombatRng(seed);
+  const actionRoll1000 = roll1000(combatRng);
+  const legacyRoll = Math.floor((actionRoll1000 * 100) / 1000);
   const intensity = 10 + turn * 2.75;
-  if (roll < 18) {
+  const baseBackfireThreshold = 180;
+  const backfireThreshold = applyProgressionBonusOutOf1000(baseBackfireThreshold, 0);
+  // Combat audit / progression-readiness table:
+  // - action roll: seed % 100 -> floor(actionRoll1000 * 100 / 1000) using a seeded 0..999 roll.
+  // - backfire threshold: 18/100 -> 180/1000, now ready for integer progression bonuses in threshold space.
+  // - self-damage: round(intensity * 0.75) -> unchanged and deterministic.
+  // - hit damage: round(intensity + (roll % 8)) -> unchanged shape via round(intensity + (legacyRoll % 8)).
+  // - progression-safe today: threshold mechanics like backfire because they resolve directly against actionRoll1000.
+  // - not yet fine-grained: legacyRoll % 8 damage cadence still moves in 1/100-sized steps, so +1/1000 bonuses
+  //   should not be applied to legacyRoll-derived outcomes without a dedicated table/weight refactor.
+  if (actionRoll1000 < backfireThreshold) {
     const selfDamage = Math.round(intensity * 0.75);
     return { type: 'backfire', amount: selfDamage, text: `${attacker.name} backfires with a boomerang blast for ${selfDamage}!` };
   }
-  const damage = Math.round(intensity + (roll % 8));
+  const damage = Math.round(intensity + (legacyRoll % 8));
   return { type: 'attack', amount: damage, text: `${attacker.name} hits ${defender.name} for ${damage} aromatic damage!` };
 }
 function isLeaderboardWriteOwner() {
