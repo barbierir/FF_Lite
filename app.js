@@ -274,6 +274,9 @@ const state = {
   leaderboard: { daily: [], rating: [] },
   leaderboardStatus: { daily: 'idle', rating: 'idle' },
   previewAnimators: [],
+  currentCandidateCreature: null,
+  selectedCreature: null,
+  featuredPreviewAnimator: null,
   pendingStartTimer: null,
   pendingStartTimerMatchId: null,
   activeMatchSubscription: null,
@@ -834,6 +837,39 @@ function withResolvedVariant(player, opponentVariantIndex, options) {
     variant: PALETTE_VARIANTS[variantIndex],
   };
 }
+function createCandidateAnimationConfig(seed = crypto.randomUUID()) {
+  return {
+    action: 'idle',
+    variant: (hashString(`${seed}:anim-variant`) % getVariantCount('idle')) + 1,
+    timingMultiplier: 0.92 + ((hashString(`${seed}:anim-speed`) % 17) / 100),
+  };
+}
+function buildCandidateCreature(seed = crypto.randomUUID(), previousCandidate = null) {
+  const previousVariantIndex = normalizeVariantIndex(previousCandidate?.variantIndex);
+  let variantIndex = hashString(`${seed}:palette`) % PALETTE_VARIANTS.length;
+  if (PALETTE_VARIANTS.length > 1 && previousVariantIndex != null && variantIndex == previousVariantIndex) {
+    variantIndex = (variantIndex + 1 + (hashString(`${seed}:palette-reroll`) % (PALETTE_VARIANTS.length - 1))) % PALETTE_VARIANTS.length;
+  }
+  return {
+    id: seed,
+    seed,
+    creatureId: 'goblin',
+    name: generateFunnyName(seed),
+    variantIndex,
+    variant: PALETTE_VARIANTS[variantIndex],
+    animation: createCandidateAnimationConfig(seed),
+  };
+}
+function ensureCurrentCandidateCreature(forceNew = false) {
+  if (!forceNew && state.currentCandidateCreature) return state.currentCandidateCreature;
+  const previous = forceNew ? state.currentCandidateCreature : null;
+  state.currentCandidateCreature = buildCandidateCreature(crypto.randomUUID(), previous);
+  return state.currentCandidateCreature;
+}
+function getActiveCreatureSelection() {
+  return state.selectedCreature || state.currentCandidateCreature || ensureCurrentCandidateCreature();
+}
+
 function buildPlayerProfile(profile = {}) {
   const creatureId = profile.creatureId || 'goblin';
   const id = profile.id || crypto.randomUUID();
@@ -863,29 +899,6 @@ function loadLocalPlayer() {
   return player;
 }
 
-function setLocalPlayerVariant(variantIndex) {
-  const normalizedVariantIndex = normalizeVariantIndex(variantIndex);
-  if (normalizedVariantIndex == null || state.me.variantIndex === normalizedVariantIndex) return;
-  state.me = {
-    ...state.me,
-    variantIndex: normalizedVariantIndex,
-    variant: PALETTE_VARIANTS[normalizedVariantIndex],
-  };
-  saveLocalPlayer(state.me);
-  if (state.pendingMatch?.payload?.playerA?.id === state.me.id) {
-    state.pendingMatch = {
-      ...state.pendingMatch,
-      payload: {
-        ...state.pendingMatch.payload,
-        playerA: {
-          ...state.pendingMatch.payload.playerA,
-          variantIndex: normalizedVariantIndex,
-        },
-      },
-    };
-  }
-  render();
-}
 function getCurrentLeaderboardDayBucket() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: LEADERBOARD_DAY_TIMEZONE }).format(new Date());
 }
@@ -1139,11 +1152,17 @@ class SpriteSheetAnimator {
     this.variant = opts.variant || null;
     this.bufferCanvas = document.createElement('canvas');
     this.bufferCtx = this.bufferCanvas.getContext('2d', { willReadFrequently: true });
+    this.destroyed = false;
     this.setFlip(this.flip);
   }
   setFlip(flip) {
+    if (!this.host) return;
     this.flip = flip;
     this.host.style.setProperty('--flip', String(flip));
+    if (this.current && this.image) this.drawFrame();
+  }
+  setVariant(variant = null) {
+    this.variant = variant || null;
     if (this.current && this.image) this.drawFrame();
   }
   static imageCache = new Map();
@@ -1171,6 +1190,7 @@ class SpriteSheetAnimator {
     }, onEnd);
   }
   playSheet(sheet, onEnd) {
+    if (this.destroyed || !this.host || !this.canvas || !this.fallback) return null;
     this.current = {
       stateName: sheet.stateName || 'custom',
       src: sheet.src,
@@ -1192,14 +1212,20 @@ class SpriteSheetAnimator {
     this.preloadAndStart();
   }
   preloadAndStart() {
-    const cached = SpriteSheetAnimator.imageCache.get(this.current.src);
+    if (this.destroyed || !this.current) return;
+    const requestedSrc = this.current.src;
+    const cached = SpriteSheetAnimator.imageCache.get(requestedSrc);
     if (cached?.complete) {
       this.handleImageLoad(cached);
       return;
     }
     const img = cached || new Image();
-    img.onload = () => this.handleImageLoad(img);
+    img.onload = () => {
+      if (this.destroyed || !this.current || this.current.src !== requestedSrc) return;
+      this.handleImageLoad(img);
+    };
     img.onerror = () => {
+      if (this.destroyed || !this.current || this.current.src !== requestedSrc) return;
       SpriteSheetAnimator.imageCache.delete(this.current.src);
       if (!this.current.usingFallback && this.current.fallbackSrc && this.current.src !== this.current.fallbackSrc) {
         this.current.src = this.current.fallbackSrc;
@@ -1208,15 +1234,22 @@ class SpriteSheetAnimator {
         return;
       }
       this.image = null;
-      if (this.canvas) this.canvas.hidden = true;
-      this.fallback.hidden = false;
-      this.fallback.textContent = `Missing sprite sheet:\n${this.current.src}`;
+      this.renderStaticFrame(this.current.fallbackSrc || this.current.src);
       if (!this.current.config.loop && this.ended) this.ended();
     };
     SpriteSheetAnimator.imageCache.set(this.current.src, img);
     if (!img.src) img.src = this.current.src;
   }
+  renderStaticFrame(src) {
+    if (this.canvas) this.canvas.hidden = true;
+    if (this.fallback) {
+      this.fallback.hidden = false;
+      this.fallback.textContent = src ? 'Preview unavailable — static frame shown.' : 'Preview unavailable.';
+      if (src) this.fallback.style.backgroundImage = `url(${src})`;
+    }
+  }
   handleImageLoad(img) {
+    if (this.destroyed || !this.current) return;
     this.image = img;
     this.frameWidth = Math.max(1, Math.floor(img.naturalWidth / this.cols));
     this.frameHeight = Math.max(1, Math.floor(img.naturalHeight / this.rows));
@@ -1257,8 +1290,10 @@ class SpriteSheetAnimator {
     this.ctx.restore();
   }
   tick() {
+    if (this.destroyed || !this.current) return;
     const { config } = this.current;
     this.timer = setTimeout(() => {
+      if (this.destroyed || !this.current) return;
       const next = this.frame + 1;
       if (next >= this.rows * this.cols) {
         if (config.loop) {
@@ -1277,7 +1312,20 @@ class SpriteSheetAnimator {
       this.tick();
     }, config.frameDuration * (Number.isFinite(config.timingMultiplier) ? config.timingMultiplier : 1));
   }
-  stop() { clearTimeout(this.timer); }
+  stop() { clearTimeout(this.timer); this.timer = null; }
+  destroy() {
+    this.stop();
+    this.destroyed = true;
+    this.ended = null;
+    this.image = null;
+    this.current = null;
+    this.host = null;
+    this.canvas = null;
+    this.ctx = null;
+    this.fallback = null;
+    this.bufferCtx = null;
+    this.bufferCanvas = null;
+  }
 }
 
 
@@ -1481,7 +1529,7 @@ function setPendingMatchState(nextPendingMatch) {
     }
   });
 }
-function makeMatchPayload(playerA = state.me) {
+function makeMatchPayload(playerA = { ...state.me, ...getActiveCreatureSelection(), variant: getActiveCreatureSelection().variant }) {
   const matchId = `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   return {
     id: matchId,
@@ -1532,7 +1580,9 @@ async function startCreateFlow() {
   playUiSfx('createMatch');
   render();
   try {
-    const payload = makeMatchPayload();
+    const activeCreature = getActiveCreatureSelection();
+    const playerForMatch = { ...state.me, name: activeCreature.name, creatureId: activeCreature.creatureId, variantIndex: activeCreature.variantIndex, variant: activeCreature.variant };
+    const payload = makeMatchPayload(playerForMatch);
     const sharedMatch = await createSharedMatch(payload);
     setPendingMatchState({
       role: 'challenger',
@@ -2181,9 +2231,9 @@ async function finishMatch() {
   syncSharedMatchResult();
 }
 
-function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex) {
+function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex, extraAttributes = '') {
   return `
-    <div class="goblin-frame home-preview-render" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}">
+    <div class="goblin-frame home-preview-render" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}" ${extraAttributes}>
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
@@ -2202,6 +2252,9 @@ function renderStatusCard(title, body, { showHomeButton = true } = {}) {
 }
 
 function renderHome() {
+  const candidate = ensureCurrentCandidateCreature();
+  const activeCreature = getActiveCreatureSelection();
+  const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
   const isChallengerView = state.homeView === 'challenger' && state.pendingMatch?.payload?.playerA?.id === state.me.id;
   const liveItems = [
     { label: 'Live arenas', value: state.pendingMatch?.opponentJoined ? '01' : '03', meta: state.pendingMatch?.opponentJoined ? 'A lobby is about to pop off.' : 'Goblins are hunting for challengers.' },
@@ -2212,28 +2265,8 @@ function renderHome() {
   const copyFeedbackMarkup = state.copyFeedback
     ? `<div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>`
     : '<div class="copy-feedback sr-only" aria-live="polite"></div>';
-  const creatureSelector = `
-    <section id="home-creature-selector" class="panel world-card creature-selector card-lift" aria-labelledby="home-creature-title">
-      <div class="section-heading compact">
-        <span class="section-kicker">Creature bay</span>
-        <h2 class="section-title" id="home-creature-title">Choose your creature</h2>
-      </div>
-      <div class="selector-copy">
-        <p class="muted">Pick the goblin palette you want to use before creating a new challenge.</p>
-      </div>
-      <div id="home-creature-grid" class="creature-selector-list" role="list" aria-label="Creature variants">
-        ${PALETTE_VARIANTS.map((variant, index) => `
-          <button
-            type="button"
-            class="creature-option btn-bounce ${state.me.variantIndex === index ? 'is-active' : ''}"
-            data-creature-variant="${index}"
-            aria-pressed="${state.me.variantIndex === index ? 'true' : 'false'}"
-          >
-            <span class="creature-option-preview">${renderAnimatedPreview(`selector-${index}`, index)}</span>
-            <span class="creature-option-label">Goblin ${index + 1}</span>
-          </button>`).join('')}
-      </div>
-    </section>`;
+
+
 
   const challengePanel = isChallengerView ? `
     <div id="home-challenge-controls" class="world-card challenge-card challenge-card-active card-lift">
@@ -2289,26 +2322,32 @@ function renderHome() {
           </div>
           ${challengePanel}
         </div>
-        <aside class="featured-fighter world-card card-lift">
+        <aside class="featured-fighter world-card card-lift" id="featured-fighter">
           <div class="section-heading compact">
             <span class="section-kicker">Featured fighter</span>
-            <h3>${state.me.name}</h3>
+            <h3 id="featured-fighter-name">${candidate.name}</h3>
           </div>
           <div class="fighter-showcase idle-float">
-            ${renderAnimatedPreview('home', state.me.variantIndex)}
+            <div id="featured-preview" class="goblin-frame home-preview-render" aria-live="polite">
+              <canvas class="sprite-canvas" aria-hidden="true"></canvas>
+              <div class="sprite-fallback" hidden></div>
+            </div>
           </div>
           <div class="fighter-tags">
-            <span class="status-chip chip-bounce">Class · Bog goblin</span>
-            <span class="status-chip chip-bounce">Trait · Chaotic stink</span>
+            <span id="featured-fighter-class" class="status-chip chip-bounce">Class · Bog goblin</span>
+            <span id="featured-fighter-trait" class="status-chip chip-bounce">Trait · Variant ${candidate.variantIndex + 1}</span>
           </div>
-          <p class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
+          <p id="featured-fighter-copy" class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
           ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
+          <div class="featured-fighter-actions">
+            <button id="featured-skip" class="ghost btn-ghost btn-bounce" type="button">Skip</button>
+            <button id="featured-choose" class="btn-primary btn-bounce" type="button" ${isSelected ? 'disabled' : ''}>${isSelected ? 'Chosen' : 'Choose'}</button>
+          </div>
+          <div id="featured-selection-state" class="subtext" aria-live="polite">${isSelected ? `${candidate.name} locked in for your next match.` : `${activeCreature.name} is queued unless you choose a different fighter.`}</div>
         </aside>
       </section>
 
       <section class="home-subgrid">
-        ${creatureSelector}
-
         <section class="panel world-card live-activity">
           <div class="section-heading compact">
             <span class="section-kicker">World activity</span>
@@ -2349,6 +2388,62 @@ function renderHome() {
       </section>
     </section>`;
 }
+function syncFeaturedPreview(candidate = ensureCurrentCandidateCreature()) {
+  const container = document.getElementById('featured-preview');
+  if (!container) return;
+  const animator = state.featuredPreviewAnimator;
+  if (!animator || animator.host !== container) {
+    state.featuredPreviewAnimator?.destroy?.();
+    state.featuredPreviewAnimator = new SpriteSheetAnimator(container, {
+      variant: candidate.variant,
+    });
+  } else {
+    state.featuredPreviewAnimator.setVariant(candidate.variant);
+  }
+  const previewAnimator = state.featuredPreviewAnimator;
+  if (!previewAnimator) return;
+  previewAnimator.play(candidate.animation.action, undefined, {
+    variant: candidate.animation.variant,
+    timingMultiplier: candidate.animation.timingMultiplier,
+  });
+}
+function updateFeaturedFighter(candidate = ensureCurrentCandidateCreature()) {
+  const activeCreature = getActiveCreatureSelection();
+  const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
+  const nameNode = document.getElementById('featured-fighter-name');
+  const classNode = document.getElementById('featured-fighter-class');
+  const traitNode = document.getElementById('featured-fighter-trait');
+  const copyNode = document.getElementById('featured-fighter-copy');
+  const stateNode = document.getElementById('featured-selection-state');
+  const chooseButton = document.getElementById('featured-choose');
+  if (nameNode) nameNode.textContent = candidate.name;
+  if (classNode) classNode.textContent = 'Class · Bog goblin';
+  if (traitNode) traitNode.textContent = `Trait · Variant ${candidate.variantIndex + 1}`;
+  if (copyNode) copyNode.textContent = 'Small, loud, unpredictable. Built for ridiculous live duels.';
+  if (stateNode) stateNode.textContent = isSelected
+    ? `${candidate.name} locked in for your next match.`
+    : `${activeCreature.name} is queued unless you choose a different fighter.`;
+  if (chooseButton) {
+    chooseButton.disabled = isSelected;
+    chooseButton.textContent = isSelected ? 'Chosen' : 'Choose';
+  }
+  syncFeaturedPreview(candidate);
+}
+function chooseCurrentFeaturedFighter() {
+  const candidate = ensureCurrentCandidateCreature();
+  state.selectedCreature = { ...candidate };
+  updateFeaturedFighter(candidate);
+}
+function skipFeaturedFighter() {
+  const nextCandidate = ensureCurrentCandidateCreature(true);
+  updateFeaturedFighter(nextCandidate);
+}
+function bindHomeFeaturedFighterControls() {
+  document.getElementById('featured-skip')?.addEventListener('click', skipFeaturedFighter);
+  document.getElementById('featured-choose')?.addEventListener('click', chooseCurrentFeaturedFighter);
+  updateFeaturedFighter();
+}
+
 function renderCreate() {
   return `
     <section class="panel screen-panel">
@@ -2575,8 +2670,10 @@ function renderLeaderboard() {
 }
 function render() {
   if (state.screen === 'home') audioManager.initializeForHome();
-  state.previewAnimators.forEach((animator) => animator.stop());
+  state.previewAnimators.forEach((animator) => animator.destroy?.());
   state.previewAnimators = [];
+  state.featuredPreviewAnimator?.destroy?.();
+  state.featuredPreviewAnimator = null;
   const app = document.getElementById('app');
   if (!app) {
     console.warn('Missing element: app');
@@ -2633,11 +2730,6 @@ function render() {
     refreshAudioControlsUI();
   });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
-  document.querySelectorAll('[data-creature-variant]').forEach((button) => {
-    button.addEventListener('click', () => {
-      setLocalPlayerVariant(Number(button.dataset.creatureVariant));
-    });
-  });
   document.getElementById('nav-leaderboard')?.addEventListener('click', showLeaderboardScreen);
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     const copyButton = document.getElementById('copy-link');
@@ -2663,6 +2755,7 @@ function render() {
   });
 
   document.querySelectorAll('[data-home-animator]').forEach((node) => {
+    if (node.id === 'featured-preview') return;
     const variantIndex = Number(node.dataset.variantIndex);
     const animator = new SpriteSheetAnimator(node, {
       variant: Number.isInteger(variantIndex) ? PALETTE_VARIANTS[variantIndex] : null,
@@ -2670,6 +2763,8 @@ function render() {
     state.previewAnimators.push(animator);
     animator.playSheet(HOME_ANIMATION);
   });
+
+  if (state.screen === 'home') bindHomeFeaturedFighterControls();
 
   if (state.screen === 'match' || state.screen === 'postmatch') {
     const nodes = [...document.querySelectorAll('[data-animator]')];
@@ -2679,14 +2774,14 @@ function render() {
     state.match.animators = nodes.map((node, index) => {
       const existing = canReuse ? previous[index] : null;
       if (existing) {
-        existing.stop();
+        existing.destroy?.();
       }
       return new SpriteSheetAnimator(node, {
       flip: state.match.fighters[index].side === 'left' ? -1 : 1,
       variant: state.match.fighters[index].variant,
     });
     });
-    previous.forEach((animator, index) => { if (!canReuse || !state.match.animators[index]) animator.stop(); });
+    previous.forEach((animator, index) => { if (!canReuse || !state.match.animators[index]) animator.destroy?.(); });
     restoreMatchAnimators({ force: true });
   }
 
