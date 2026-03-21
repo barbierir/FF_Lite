@@ -2655,7 +2655,7 @@ function renderHome() {
                 <div class="sprite-fallback" hidden></div>
               </div>
             </div>
-            <p id="featured-fighter-copy" class="subtext">${isSavedGoblin ? `Current fighter · ${candidate.wins || 0} wins · Level ${candidate.level || 1}` : 'Small, loud, unpredictable. Built for ridiculous live duels.'}</p>
+            <p id="featured-fighter-copy" class="subtext">${isSavedGoblin ? getFeaturedFighterSummary(candidate, { isSavedGoblin }) : 'Small, loud, unpredictable. Built for ridiculous live duels.'}</p>
             ${isChallengerView ? `<div id="featured-fighter-supporting" class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : '<div id="featured-fighter-supporting" class="subtext" hidden></div>'}
           </div>
           <div class="featured-fighter-actions">
@@ -2739,11 +2739,7 @@ function updateFeaturedFighter(candidate = getFeaturedFighterCandidate()) {
       ? '<span class="featured-fighter-tag">Your goblin · Saved locally</span>'
       : '<span class="featured-fighter-tag is-preview">Preview candidate</span>';
   }
-  if (copyNode) {
-    copyNode.textContent = isSavedGoblin
-      ? `Current fighter · ${candidate.wins || 0} wins · Level ${candidate.level || 1}`
-      : 'Choose to save this goblin locally, or skip to preview another candidate.';
-  }
+  if (copyNode) copyNode.textContent = getFeaturedFighterSummary(candidate, { isSavedGoblin });
   if (supportingNode) {
     if (state.pendingMatch && state.homeView === 'challenger') {
       supportingNode.hidden = false;
@@ -2997,8 +2993,18 @@ function setLeaderboardPage(type, page) {
   state.leaderboardPage = { ...state.leaderboardPage, [type]: nextPage };
   render();
 }
-function renderLeaderboardMiniPreview(row, rank) {
-  return renderAnimatedPreview(`leaderboard-${row.playerId || row.name || rank}`, row.variantIndex, 'aria-hidden="true"', 'goblin-frame leaderboard-mini-preview');
+function getFeaturedFighterRankMeta(candidate = getFeaturedFighterCandidate()) {
+  const playerId = candidate?.id || state.me?.id || state.selectedCreature?.id;
+  if (!playerId) return 'Unranked';
+  const ratingRank = state.leaderboard.rating.findIndex((row) => row.playerId === playerId);
+  if (ratingRank >= 0) return `Rank #${ratingRank + 1}`;
+  const dailyRank = state.leaderboard.daily.findIndex((row) => row.playerId === playerId);
+  if (dailyRank >= 0) return `Today #${dailyRank + 1}`;
+  return 'Unranked';
+}
+function getFeaturedFighterSummary(candidate = getFeaturedFighterCandidate(), { isSavedGoblin = false } = {}) {
+  if (!isSavedGoblin) return 'Choose to save this goblin locally, or skip to preview another candidate.';
+  return `${getFeaturedFighterRankMeta(candidate)} · ${candidate.wins || 0} wins · Level ${candidate.level || 1}`;
 }
 function renderLeaderboardRows(rows, type, page = 1) {
   const pageOffset = (page - 1) * LEADERBOARD_PAGE_SIZE;
@@ -3014,10 +3020,9 @@ function renderLeaderboardRows(rows, type, page = 1) {
         <div class="leaderboard-identity">
           <div class="leaderboard-identity-meta">
             <span class="leaderboard-rank">#${rank}</span>
+            <div class="leaderboard-name">${row.name}</div>
             ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
           </div>
-          ${renderLeaderboardMiniPreview(row, rank)}
-          <div class="leaderboard-name">${row.name}</div>
         </div>
         <div class="leaderboard-stats">
           <span>W ${row.wins}</span><span>L ${row.losses}</span><span>D ${row.draws}</span><span>${row.matchesPlayed} ${row.matchesPlayed === 1 ? 'match' : 'matches'}</span><span>${row.winRate}% WR</span>
@@ -3040,21 +3045,24 @@ function renderLeaderboardSection(title, description, rows, status, type) {
   const showPagination = rows.length > LEADERBOARD_PAGE_SIZE;
   return `<section class="leaderboard-section leaderboard-section-${type} world-card card-lift">
     <div class="leaderboard-section-head">
-      <div>
+      <div class="leaderboard-section-title">
         <p class="leaderboard-kicker">${type === 'daily' ? 'Daily board' : 'Global ladder'}</p>
         <h2>${title}</h2>
       </div>
+      <p class="muted">${description}</p>
+    </div>
+    <div class="leaderboard-list list-stagger">
+      ${rows.length ? renderLeaderboardRows(paginatedRows, type, currentPage) : `<div class="leaderboard-empty">${message}</div>`}
+    </div>
+    <div class="leaderboard-section-footer">
       <div class="leaderboard-section-meta">
-        <p class="muted">${description}</p>
+        <span class="leaderboard-section-count muted">${rows.length ? `${rows.length} total contenders` : message}</span>
         ${showPagination ? `<div class="leaderboard-pagination" aria-label="${title} pages">
           <button class="leaderboard-page-btn ghost btn-ghost" data-page-dir="prev" data-page-type="${type}" ${currentPage === 1 ? 'disabled' : ''} aria-label="Previous ${title} page">‹</button>
           <span class="leaderboard-page-indicator">${currentPage} / ${totalPages}</span>
           <button class="leaderboard-page-btn ghost btn-ghost" data-page-dir="next" data-page-type="${type}" ${currentPage === totalPages ? 'disabled' : ''} aria-label="Next ${title} page">›</button>
-        </div>` : ''}
+        </div>` : '<span class="leaderboard-pagination-spacer" aria-hidden="true"></span>'}
       </div>
-    </div>
-    <div class="leaderboard-list list-stagger">
-      ${rows.length ? renderLeaderboardRows(paginatedRows, type, currentPage) : `<div class="leaderboard-empty">${message}</div>`}
     </div>
   </section>`;
 }
