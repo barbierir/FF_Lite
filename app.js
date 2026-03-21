@@ -63,8 +63,9 @@ const ANIMATION_CONFIG = {
   victory: { loop: true, frameDuration: 120 },
   defeat: { loop: false, frameDuration: 120, freezeLastFrame: true },
 };
-const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 'Fizzle', 'Crust', 'Toad'];
-const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel'];
+const NAME_PREFIXES = ['Stink', 'Bog', 'Snort', 'Muck', 'Grim', 'Snot', 'Burp', 'Fizzle', 'Crust', 'Toad', 'Grub', 'Whiff', 'Boggle', 'Nettle', 'Clod', 'Gloom', 'Puff', 'Skunk', 'Blort', 'Scum', 'Grot', 'Wobble', 'Nub', 'Smog', 'Bungle', 'Rumble'];
+const NAME_MIDDLES = ['', '', '', 'ble', 'snort', 'muck', 'whiz', 'grub', 'bel', 'crum', 'bog', 'toot', 'nib', 'whiff', 'gunk', 'wob'];
+const NAME_SUFFIXES = ['nibbler', 'belch', 'toes', 'whiff', 'sniffer', 'rump', 'fizzle', 'gob', 'blast', 'morsel', 'boggle', 'snout', 'munch', 'belly', 'gristle', 'wiggle', 'snork', 'whistle', 'crumble', 'snuffle', 'tumble', 'guzzle', 'burble', 'waddle'];
 const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
 const MAX_BATTLE_LOG_ENTRIES = 24;
@@ -706,8 +707,9 @@ function pickDeterministic(list, seed) {
 }
 function generateFunnyName(seed = crypto.randomUUID()) {
   const prefix = pickDeterministic(NAME_PREFIXES, `${seed}:p`);
+  const middle = pickDeterministic(NAME_MIDDLES, `${seed}:m`);
   const suffix = pickDeterministic(NAME_SUFFIXES, `${seed}:s`);
-  return `${prefix}${suffix}`;
+  return `${prefix}${middle}${suffix}`.replace(/(.)\1{2,}/gi, '$1$1');
 }
 function getStoredPlayerProfile() {
   try {
@@ -1205,7 +1207,7 @@ function mapRecordToMatch(record) {
 }
 async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) {
   if (!isBackendConfigured()) {
-    throw new Error('Backend non configurato. Aggiungi supabaseUrl e supabaseAnonKey in ff.config.js.');
+    throw new Error('Backend not configured. Add supabaseUrl and supabaseAnonKey to ff.config.js.');
   }
   const normalizedMethod = String(method || 'GET').toUpperCase();
   const response = await fetch(`${getBackendBaseUrl()}/rest/v1/${pathname}`, {
@@ -1258,9 +1260,9 @@ async function updateSharedMatch(matchId, updates, filters = 'select=*') {
 }
 async function joinSharedMatch(matchId, playerB) {
   const current = await getSharedMatch(matchId);
-  if (!current) throw new Error('Questo match non esiste più oppure il link non è valido.');
-  if (current.status === 'finished') throw new Error('Questo match è già terminato.');
-  if (current.playerB && current.playerB.id !== playerB.id) throw new Error('Questo match è già pieno o già iniziato.');
+  if (!current) throw new Error('This match no longer exists or the link is invalid.');
+  if (current.status === 'finished') throw new Error('This match has already ended.');
+  if (current.playerB && current.playerB.id !== playerB.id) throw new Error('This match is already full or has already started.');
   if (current.playerB?.id === playerB.id && current.status === 'active') return current;
   const rows = await updateSharedMatch(matchId, {
     player_b: playerB,
@@ -1269,8 +1271,8 @@ async function joinSharedMatch(matchId, playerB) {
   if (rows[0]) return rows[0];
   const latest = await getSharedMatch(matchId);
   if (latest?.playerB?.id === playerB.id) return latest;
-  if (latest?.status === 'active') throw new Error('Questo match è già iniziato con un altro player B.');
-  throw new Error('Qualcun altro ha già occupato questo match.');
+  if (latest?.status === 'active') throw new Error('This match already started with another Player B.');
+  throw new Error('Someone else already grabbed this match.');
 }
 function clearMatchWatcher() {
   if (state.activeMatchSubscription) {
@@ -1429,7 +1431,7 @@ async function startCreateFlow() {
     render();
   } catch (error) {
     console.error(error);
-    setError(error.message || 'Impossibile creare il match condiviso.');
+    setError(error.message || 'Unable to create the shared match.');
   }
 }
 async function startJoinedFlow(matchId) {
@@ -1440,13 +1442,13 @@ async function startJoinedFlow(matchId) {
   render();
   try {
     const hostMatch = await getSharedMatch(matchId);
-    if (!hostMatch?.playerA) throw new Error('Il match condiviso è incompleto e non può partire.');
+    if (!hostMatch?.playerA) throw new Error('The shared match is incomplete and cannot start.');
     const playerB = withResolvedVariant(state.me, hostMatch.playerA.variantIndex, { preserveExisting: false });
     state.me = playerB;
     saveLocalPlayer(playerB);
     const sharedMatch = await joinSharedMatch(matchId, { id: playerB.id, name: playerB.name, creatureId: playerB.creatureId, variantIndex: playerB.variantIndex });
     if (!sharedMatch?.playerA || !sharedMatch?.playerB) {
-      throw new Error('Il match condiviso è incompleto e non può partire.');
+      throw new Error('The shared match is incomplete and cannot start.');
     }
     setPendingMatchState({
       payload: sharedMatch,
@@ -1461,7 +1463,7 @@ async function startJoinedFlow(matchId) {
     queueMatchStart(sharedMatch);
   } catch (error) {
     console.error(error);
-    setError(error.message || 'Impossibile unirsi al match condiviso.');
+    setError(error.message || 'Unable to join the shared match.');
   }
 }
 function queueMatchStart(payload) {
@@ -1493,7 +1495,7 @@ function queueMatchStart(payload) {
     }
     state.screen = 'match';
     state.match = createResolvedMatch(payload);
-    state.logs = ['I goblini si annusano con sospetto...'];
+    state.logs = ['The goblins sniff each other suspiciously...'];
     render();
     runMatchSequence();
   }, 900);
@@ -1542,12 +1544,12 @@ function wrapLogMatches(text, matcher, className) {
 function classifyBattleLogEvent(line) {
   const text = String(line || '').toLowerCase();
   if (!text) return 'neutral';
-  if (/trionfa|wins!|win!|victory|trofeo/.test(text)) return 'victory';
-  if (/crolla|defeat|sconfit|abbattut|cade/.test(text)) return 'defeat';
-  if (/autosabota|boomerang|backfire/.test(text)) return 'backfire';
-  if (/carica|prepara|recharge|energia/.test(text)) return 'charge';
-  if (/colpisce|danni aromatici|hit/.test(text)) return 'hit';
-  if (/assalta|attacca|all'attacco|attack/.test(text)) return 'attack';
+  if (/wins!|win!|victory|trophy|triumphs/.test(text)) return 'victory';
+  if (/defeat|collapsed|collapses|falls/.test(text)) return 'defeat';
+  if (/boomerang|backfire|backfires/.test(text)) return 'backfire';
+  if (/prep|recharge|energy|charges/.test(text)) return 'charge';
+  if (/hits|aromatic damage/.test(text)) return 'hit';
+  if (/attack|lunges/.test(text)) return 'attack';
   return 'neutral';
 }
 function getLogEventMeta(type) {
@@ -1564,9 +1566,9 @@ function formatLogLine(line) {
       const safeName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       html = wrapLogMatches(html, new RegExp(safeName, 'g'), 'log-name');
     });
-  html = wrapLogMatches(html, /\b(colpisce|autosabota|trionfa|crolla|carica|pareggio|prepara|scaglia|resiste|copiato|necessaria)\b/gi, 'log-action');
-  html = wrapLogMatches(html, /\b\d+\b(?= danni? aromatici|!)/gi, 'log-result');
-  html = wrapLogMatches(html, /\b(danni aromatici|boomerang|nebbia verdognola|tossico|appunti)\b/gi, 'log-result');
+  html = wrapLogMatches(html, /\b(hits|backfires|triumphs|collapses|charges|draw|preps|flings|holds|copied|manual)\b/gi, 'log-action');
+  html = wrapLogMatches(html, /\b\d+\b(?= aromatic damage|!)/gi, 'log-result');
+  html = wrapLogMatches(html, /\b(aromatic damage|boomerang|greenish haze|toxic|clipboard)\b/gi, 'log-result');
   return html;
 }
 function renderBattleLogEntries() {
@@ -1596,7 +1598,7 @@ function updateMatchUI() {
     if (hpDelta) triggerHpChangeEffect(index, hpDelta);
   });
   const turnLabel = document.querySelector('[data-turn-counter]');
-  if (turnLabel) turnLabel.textContent = `Turno ${state.match.turn}`;
+  if (turnLabel) turnLabel.textContent = `Turn ${state.match.turn}`;
   const logPanel = document.getElementById('log-lines');
   if (logPanel) {
     const nextMarkup = renderBattleLogEntries();
@@ -1625,10 +1627,10 @@ function computeAction(attacker, defender, turn) {
   const intensity = 10 + turn * 2.75;
   if (roll < 18) {
     const selfDamage = Math.round(intensity * 0.75);
-    return { type: 'backfire', amount: selfDamage, text: `${attacker.name} si autosabota con una scoreggia boomerang da ${selfDamage}!` };
+    return { type: 'backfire', amount: selfDamage, text: `${attacker.name} backfires with a boomerang blast for ${selfDamage}!` };
   }
   const damage = Math.round(intensity + (roll % 8));
-  return { type: 'attack', amount: damage, text: `${attacker.name} colpisce ${defender.name} per ${damage} danni aromatici!` };
+  return { type: 'attack', amount: damage, text: `${attacker.name} hits ${defender.name} for ${damage} aromatic damage!` };
 }
 function isLeaderboardWriteOwner() {
   const playerA = state.match?.fighters?.find((fighter) => fighter.slot === 'A') || null;
@@ -1928,7 +1930,7 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
       sound: 'charge',
       soundDelay: MATCH_SOUND_OFFSETS.charge,
       duration: MATCH_ACTION_TIMINGS.recharge,
-      log: `${attacker.name} carica una zaffata sospetta.`,
+      log: `${attacker.name} charges a suspicious blast.`,
       logDelay: 120,
     }],
   }];
@@ -2017,7 +2019,7 @@ async function finishMatch() {
     state.match.winner = null;
     setAllFighterStates('idle');
     await updateLeaderboardForResult(null, null, true);
-    await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'reveal', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.draw, log: 'Pareggio tossico: nessuno crolla davvero.' });
+    await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'reveal', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.draw, log: 'Toxic draw: nobody actually collapses.' });
   } else {
     const winner = a.hp > b.hp ? a : b;
     const loser = winner === a ? b : a;
@@ -2033,7 +2035,7 @@ async function finishMatch() {
       sound: 'reveal',
       soundGroup: 'result',
       duration: MATCH_ACTION_TIMINGS.victory,
-      log: `${winner.name} trionfa nella nebbia verdognola.`,
+      log: `${winner.name} triumphs in the greenish haze.`,
     });
     playResultSfx('victory');
     playResultSfx('defeat');
@@ -2068,9 +2070,9 @@ function renderStatusCard(title, body, { showHomeButton = true } = {}) {
 function renderHome() {
   const isChallengerView = state.homeView === 'challenger' && state.pendingMatch?.payload?.playerA?.id === state.me.id;
   const liveItems = [
-    { label: 'Live arenas', value: state.pendingMatch?.opponentJoined ? '01' : '03', meta: state.pendingMatch?.opponentJoined ? 'Una lobby pronta a scoppiare.' : 'Goblin in cerca di sfidanti.' },
-    { label: 'Recent winner', value: 'Bogbelch', meta: 'Ha chiuso un fight in 52 sec.' },
-    { label: 'Fresh lobby', value: 'Share link', meta: 'Crea un match e mandalo in 1 tap.' },
+    { label: 'Live arenas', value: state.pendingMatch?.opponentJoined ? '01' : '03', meta: state.pendingMatch?.opponentJoined ? 'A lobby is about to pop off.' : 'Goblins are hunting for challengers.' },
+    { label: 'Recent winner', value: 'Bogbelch', meta: 'Wrapped up a duel in 52 sec.' },
+    { label: 'Fresh lobby', value: 'Share link', meta: 'Create a match and send it in 1 tap.' },
   ];
   const leaderboardPreview = (state.leaderboard.rating?.length ? state.leaderboard.rating : state.leaderboard.daily).slice(0, 3);
   const copyFeedbackMarkup = state.copyFeedback
@@ -2079,25 +2081,25 @@ function renderHome() {
   const challengePanel = isChallengerView ? `
     <div class="world-card challenge-card challenge-card-active card-lift">
       <div class="section-heading compact">
-        <span class="section-kicker">Lobby live</span>
-        <h3>Challenge link pronto</h3>
+        <span class="section-kicker">Live lobby</span>
+        <h3>Challenge link ready</h3>
       </div>
-      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
+      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copy link' })}
       ${copyFeedbackMarkup}
       <div class="status-chip-row">
-        <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting join'}</span>
+        <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting for Player B'}</span>
         <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
       </div>
     </div>` : state.pendingMatch ? `
     <div class="world-card challenge-card card-lift">
       <div class="section-heading compact">
         <span class="section-kicker">Share challenge</span>
-        <h3>Link pronto per lo scontro</h3>
+        <h3>Link ready for the showdown</h3>
       </div>
-      <p class="muted challenge-card-text">Crea il match senza lasciare la home, poi manda il link al player B.</p>
-      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
+      <p class="muted challenge-card-text">Create the match without leaving Home, then send the link to Player B.</p>
+      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copy link' })}
       ${copyFeedbackMarkup}
-      ${state.pendingMatch.opponentJoined ? '<p class="muted challenge-card-text">Avversario trovato: il match partirà da solo.</p>' : ''}
+      ${state.pendingMatch.opponentJoined ? '<p class="muted challenge-card-text">Opponent found: the match will start on its own.</p>' : ''}
     </div>` : `
     <div class="hero-cta-block cta-alive card-lift">
       <div class="inline-actions hero-actions">
@@ -2122,13 +2124,7 @@ function renderHome() {
           <span class="spark spark-b"></span>
         </div>
         <div class="hero-copy">
-          <div class="hero-badges">
-            <span class="badge badge-live chip-bounce">Live arena</span>
-            <span class="badge chip-bounce">2-player chaos</span>
-            <span class="badge chip-bounce">Storybook arcade</span>
-          </div>
           <h1>Fast goblin duels in a bright little cartoon world.</h1>
-          <p class="hero-lead">The big intro banner is gone, so the main arena hub now carries the mood: playful creature battles, cheerful village energy, and readable chaos in under a minute.</p>
           <div class="hero-meta">
             <div class="meta-pill card-lift"><strong>Avg match</strong><span>45–60 sec</span></div>
             <div class="meta-pill card-lift"><strong>Mode</strong><span>Share link multiplayer</span></div>
@@ -2185,7 +2181,7 @@ function renderHome() {
                   <span>${row.wins}W · ${row.losses}L · ${row.draws}D</span>
                 </div>
                 <div class="preview-score">${row.rating || row.wins}</div>
-              </article>`).join('') : '<div class="leaderboard-empty">Leaderboard pronta a popolarsi dopo i primi match.</div>'}
+              </article>`).join('') : '<div class="leaderboard-empty">The leaderboard will fill up after the first few matches.</div>'}
           </div>
           <div class="footer-actions align-start">
             <button class="ghost btn-ghost btn-bounce" id="home-leaderboard">Open leaderboard</button>
@@ -2197,11 +2193,11 @@ function renderHome() {
 function renderCreate() {
   return `
     <section class="panel screen-panel">
-      <h1 class="screen-title">Crea match</h1>
-      <p class="muted">Copia e invia questo link all’avversario. Il match condiviso rimane in attesa sul backend finché l’avversario non entra.</p>
-      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-bounce share-link-copy', buttonLabel: 'Copia link' })}
+      <h1 class="screen-title">Create match</h1>
+      <p class="muted">Copy and send this link to your opponent. The shared match waits on the backend until they join.</p>
+      ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-bounce share-link-copy', buttonLabel: 'Copy link' })}
       <div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>
-      <p class="muted">Questa schermata controlla il match condiviso ogni pochi secondi. Quando il player B entra, il match parte automaticamente anche qui senza refresh.</p>
+      <p class="muted">This screen checks the shared match every few seconds. When Player B joins, the match starts here automatically with no refresh needed.</p>
       <div class="goblin-preview" style="margin-top:18px;">
         ${renderAnimatedPreview('create', state.pendingMatch.payload.playerA.variantIndex)}
         <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
@@ -2268,7 +2264,7 @@ function hydrateMatchFromSharedState(sharedMatch) {
   if (progress.finished) state.match.finished = true;
 }
 
-function renderShareLinkRow(url, { buttonClass = 'btn-bounce', buttonLabel = 'Copia link' } = {}) {
+function renderShareLinkRow(url, { buttonClass = 'btn-bounce', buttonLabel = 'Copy link' } = {}) {
   const safeUrl = escapeHtml(url || '');
   const safeButtonClass = escapeHtml(buttonClass);
   const safeButtonLabel = escapeHtml(buttonLabel);
@@ -2285,9 +2281,9 @@ function renderJoin() {
       <div>
         <div class="section-heading compact">
           <span class="section-kicker">Lobby accepted</span>
-          <h1 class="screen-title">Avversario trovato</h1>
+          <h1 class="screen-title">Opponent found</h1>
         </div>
-        <p class="muted">Sei il player B. I goblin stanno entrando nell’arena…</p>
+        <p class="muted">You are Player B. The goblins are marching into the arena…</p>
         <div class="info-card world-card card-lift">
           <strong>Host</strong><br/>${state.pendingMatch.payload.playerA.name}
         </div>
@@ -2295,7 +2291,7 @@ function renderJoin() {
       <div class="goblin-preview">
         ${renderAnimatedPreview('join', playerB.variantIndex)}
         <div class="nameplate">${playerB.name}</div>
-        <div class="subtext">Preparati: il match parte da solo fra un attimo.</div>
+        <div class="subtext">Get ready: the match starts by itself in a moment.</div>
       </div>
     </section>`;
 }
@@ -2310,14 +2306,14 @@ function renderMatchOrPost() {
         <div class="match-meta">
           <div class="section-heading compact">
             <span class="section-kicker">Live arena</span>
-            <h1 class="screen-title">${isPost ? 'Risultato match' : 'Match'}</h1>
+            <h1 class="screen-title">${isPost ? 'Match result' : 'Match'}</h1>
           </div>
           <div class="match-status-cluster">
-            <span class="status-chip chip-bounce" data-turn-counter>Turno ${state.match.turn}</span>
+            <span class="status-chip chip-bounce" data-turn-counter>Turn ${state.match.turn}</span>
             <span class="status-chip chip-bounce" data-live="true">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
           </div>
         </div>
-        ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Entrambi sopravvivono al fetore conclusivo.'}</div>` : ''}
+        ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Both fighters survive the final stink burst.'}</div>` : ''}
       </div>
       <div class="arena-shell">
         <section class="arena world-card">
@@ -2377,7 +2373,7 @@ function renderLeaderboardRows(rows, type) {
       <div class="leaderboard-main">
         <div class="leaderboard-name">${row.name}</div>
         <div class="leaderboard-stats">
-          <span>W ${row.wins}</span><span>L ${row.losses}</span><span>D ${row.draws}</span><span>${row.matchesPlayed} match</span><span>${row.winRate}% WR</span>
+          <span>W ${row.wins}</span><span>L ${row.losses}</span><span>D ${row.draws}</span><span>${row.matchesPlayed} ${row.matchesPlayed === 1 ? 'match' : 'matches'}</span><span>${row.winRate}% WR</span>
         </div>
       </div>
       ${primaryValue}
@@ -2386,10 +2382,10 @@ function renderLeaderboardRows(rows, type) {
 }
 function renderLeaderboardSection(title, description, rows, status, type) {
   const message = status === 'loading'
-    ? 'Caricamento…'
+    ? 'Loading…'
     : status === 'error'
-      ? 'Impossibile caricare questa classifica.'
-      : 'Nessun risultato disponibile.';
+      ? 'Unable to load this leaderboard.'
+      : 'No results yet.';
   return `<section class="leaderboard-section leaderboard-section-${type} world-card card-lift">
     <div class="leaderboard-section-head">
       <div>
@@ -2410,16 +2406,11 @@ function renderLeaderboard() {
         <div class="section-heading">
           <span class="section-kicker">Hall of troublemakers</span>
           <h1 class="screen-title">Leaderboard</h1>
-          <p class="muted">Progressi giornalieri separati dalla classifica Elo globale.</p>
-        </div>
-        <div class="leaderboard-top-meta">
-          <div class="badge badge-live chip-bounce" data-live="true">UTC daily bucket</div>
-          <div class="badge chip-bounce">Live sync</div>
         </div>
       </div>
       <div class="leaderboard-columns">
-        ${renderLeaderboardSection('Daily leaderboard', `Risultati del giorno (${LEADERBOARD_DAY_TIMEZONE}).`, state.leaderboard.daily, state.leaderboardStatus.daily, 'daily')}
-        ${renderLeaderboardSection('Global rating leaderboard', 'Rating persistente con Elo iniziale 1000.', state.leaderboard.rating, state.leaderboardStatus.rating, 'rating')}
+        ${renderLeaderboardSection('Daily leaderboard', `Today's results (${LEADERBOARD_DAY_TIMEZONE}).`, state.leaderboard.daily, state.leaderboardStatus.daily, 'daily')}
+        ${renderLeaderboardSection('Global rating leaderboard', 'Persistent rating with a starting Elo of 1000.', state.leaderboard.rating, state.leaderboardStatus.rating, 'rating')}
       </div>
     </section>`;
 }
@@ -2435,12 +2426,11 @@ function render() {
           <span class="brand-mark">FF</span>
           <div>
             <strong>Fart & Furious</strong>
-            <small>Lite arena</small>
           </div>
         </div>
         <div class="topbar-nav">
           <button class="nav-pill btn-bounce ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button>
-          ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="nav-pill nav-pill-accent btn-bounce" id="nav-create">Crea nuovo match</button>'}
+          ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="nav-pill nav-pill-accent btn-bounce" id="nav-create">Create match</button>'}
           <button class="nav-pill btn-bounce ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button>
         </div>
         <div class="audio-controls" aria-label="Audio controls">
@@ -2451,14 +2441,14 @@ function render() {
           </label>
         </div>
       </nav>
-      ${state.loading ? renderStatusCard('Connessione al match condiviso', 'Sto sincronizzando il match Lite con il backend condiviso…') : ''}
-      ${state.screen === 'boot' ? renderStatusCard('Apro il match condiviso', 'Sto risolvendo il link condiviso prima di mostrare la lobby o il match…', { showHomeButton: false }) : ''}
+      ${state.loading ? renderStatusCard('Connecting to the shared match', 'Syncing the Lite match with the shared backend…') : ''}
+      ${state.screen === 'boot' ? renderStatusCard('Opening the shared match', 'Resolving the shared link before showing the lobby or the match…', { showHomeButton: false }) : ''}
       ${state.screen === 'home' ? renderHome() : ''}
       ${state.screen === 'create' ? renderCreate() : ''}
       ${state.screen === 'join' ? renderJoin() : ''}
       ${state.screen === 'match' || state.screen === 'postmatch' ? renderMatchOrPost() : ''}
       ${state.screen === 'leaderboard' ? renderLeaderboard() : ''}
-      ${state.screen === 'error' ? renderStatusCard('Problema match condiviso', state.errorMessage) : ''}
+      ${state.screen === 'error' ? renderStatusCard('Shared match problem', state.errorMessage) : ''}
     </main>`;
 
   document.getElementById('nav-home')?.addEventListener('click', resetToHome);
@@ -2487,10 +2477,10 @@ function render() {
       playUiSfx('copySuccess');
       copyButton?.classList.add('copy-success');
       triggerTemporaryClass(copyButton, 'is-pop', 230);
-      logLine('Link copiato negli appunti.');
+      logLine('Link copied to the clipboard.');
     } catch {
       state.copyFeedback = 'Copy unavailable — use manual copy.';
-      logLine('Copia manuale necessaria: il browser non permette gli appunti.');
+      logLine('Manual copy needed: the browser will not allow clipboard access.');
     }
     const feedbackNode = document.querySelector('.copy-feedback');
     if (feedbackNode) feedbackNode.textContent = state.copyFeedback;
