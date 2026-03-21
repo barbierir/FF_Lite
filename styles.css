@@ -968,25 +968,30 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 .match-layout { gap: 16px; }
-.match-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(280px, 0.95fr);
-  gap: clamp(16px, 2vw, 24px);
-  align-items: start;
-}
+.match-shell,
 .match-main,
 .match-sidebar,
 .match-head,
-.battle-log-wrap {
+.battle-log-wrap,
+.match-content-row {
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+.match-shell {
+  align-content: start;
+}
+.match-content-row {
+  grid-template-columns: minmax(0, 2.2fr) minmax(280px, 0.95fr);
+  gap: clamp(16px, 2vw, 24px);
+  align-items: start;
 }
 .match-main {
   align-content: start;
 }
 .match-sidebar {
-  align-self: stretch;
+  align-self: start;
+  margin: 0;
 }
 .match-meta {
   display: flex;
@@ -1142,8 +1147,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 .log-panel {
   min-height: 0;
   border-radius: var(--radius-card);
-  padding: 16px 14px 14px;
-  background: var(--surface-soft);
+  padding: 18px 16px 16px;
+  background: linear-gradient(180deg, rgba(247, 247, 242, 0.98), rgba(236, 243, 228, 0.95));
 }
 .battle-feed-card {
   display: flex;
@@ -1160,11 +1165,11 @@ button:disabled { opacity: 0.6; cursor: default; }
   justify-content: space-between;
   gap: 14px;
   align-items: flex-start;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 .log-heading-group {
   display: grid;
-  gap: 4px;
+  gap: 5px;
 }
 .log-heading {
   margin: 0;
@@ -1181,7 +1186,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 #log-lines {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   align-content: start;
   overflow-y: auto;
   padding-right: 4px;
@@ -1190,29 +1195,29 @@ button:disabled { opacity: 0.6; cursor: default; }
 .battle-feed__item {
   --feed-accent: rgba(125, 164, 119, 0.24);
   --feed-accent-strong: rgba(125, 164, 119, 0.42);
-  --feed-icon-bg: rgba(222, 232, 177, 0.48);
-  --feed-icon-color: #45613a;
-  --feed-tag-bg: rgba(255, 255, 255, 0.66);
+  --feed-icon-bg: rgba(222, 232, 177, 0.32);
+  --feed-icon-color: #3d5834;
+  --feed-tag-bg: rgba(255, 255, 255, 0.76);
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: 12px;
   align-items: start;
   margin: 0;
   min-height: 0;
-  line-height: 1.35;
-  color: var(--text-main);
-  padding: 10px 11px 10px 12px;
-  border-radius: 15px;
-  background: rgba(238, 243, 228, 0.96);
-  border: 1.5px solid rgba(33, 65, 42, 0.12);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.82), 0 4px 10px rgba(84, 122, 77, 0.05);
+  line-height: 1.45;
+  color: #203625;
+  padding: 12px 13px 12px 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(244, 248, 238, 0.98), rgba(233, 239, 224, 0.95));
+  border: 1px solid rgba(33, 65, 42, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 5px 12px rgba(84, 122, 77, 0.06);
   overflow: hidden;
 }
 .battle-feed__item::after {
   content: '';
   position: absolute;
-  inset: 7px auto 7px 7px;
+  inset: 8px auto 8px 8px;
   width: 3px;
   border-radius: 999px;
   background: linear-gradient(180deg, var(--feed-accent-strong), var(--feed-accent));
@@ -1221,9 +1226,9 @@ button:disabled { opacity: 0.6; cursor: default; }
 .battle-feed__item + .battle-feed__item::before {
   content: '';
   position: absolute;
-  inset: -4px 16px auto;
+  inset: -6px 18px auto;
   height: 1px;
-  background: linear-gradient(90deg, rgba(125, 164, 119, 0), rgba(125, 164, 119, 0.22), rgba(125, 164, 119, 0));
+  background: linear-gradient(90deg, rgba(125, 164, 119, 0), rgba(125, 164, 119, 0.24), rgba(125, 164, 119, 0));
 }
 .battle-feed__item.is-latest {
   border-color: rgba(111, 148, 86, 0.3);
@@ -1233,11 +1238,11 @@ button:disabled { opacity: 0.6; cursor: default; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.8rem;
-  height: 1.8rem;
+  width: 1.55rem;
+  height: 1.55rem;
   border-radius: 999px;
-  margin-top: 2px;
-  font-size: 0.85rem;
+  margin-top: 1px;
+  font-size: 0.72rem;
   line-height: 1;
   color: var(--feed-icon-color);
   background: var(--feed-icon-bg);
@@ -1246,12 +1251,12 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .battle-feed__body {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 .battle-feed__meta {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
@@ -1259,18 +1264,19 @@ button:disabled { opacity: 0.6; cursor: default; }
 .battle-feed__count {
   display: inline-flex;
   align-items: center;
-  min-height: 1.2rem;
+  min-height: 1.05rem;
   border-radius: 999px;
-  padding: 0.08rem 0.45rem;
-  font-size: 0.68rem;
-  font-weight: 900;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   background: var(--feed-tag-bg);
-  color: rgba(33, 65, 42, 0.76);
+  color: rgba(33, 65, 42, 0.78);
 }
 .battle-feed__count {
-  color: rgba(33, 65, 42, 0.58);
+  color: rgba(33, 65, 42, 0.48);
+  background: rgba(255, 255, 255, 0.52);
 }
 .battle-feed__headline,
 .battle-feed__detail {
@@ -1278,22 +1284,24 @@ button:disabled { opacity: 0.6; cursor: default; }
   overflow-wrap: anywhere;
 }
 .battle-feed__headline {
-  font-size: 0.92rem;
-  font-weight: 800;
-  letter-spacing: 0.01em;
+  font-size: 0.98rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  color: #18301f;
 }
 .battle-feed__detail {
-  font-size: 0.8rem;
-  color: rgba(33, 65, 42, 0.76);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: rgba(33, 65, 42, 0.84);
 }
 .log-name {
-  color: #1b6a43;
-  font-weight: 800;
+  color: #165f3d;
+  font-weight: 900;
   text-shadow: 0 1px 0 rgba(255,255,255,0.34);
 }
 .log-action {
-  color: #235b40;
-  font-weight: 800;
+  color: #1d4f38;
+  font-weight: 900;
 }
 .log-result {
   color: var(--danger-accent);
@@ -1303,7 +1311,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   padding: 0 0.18rem;
 }
 .battle-feed__empty {
-  min-height: 72px;
+  min-height: 80px;
 }
 .battle-feed__item.is-attack {
   --feed-accent: rgba(186, 181, 74, 0.24);
@@ -1843,7 +1851,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   .hero-redesign,
   .home-subgrid,
   .leaderboard-columns,
-  .match-shell {
+  .match-content-row {
     grid-template-columns: 1fr;
   }
   .featured-fighter {
