@@ -911,10 +911,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   z-index: 0;
   pointer-events: none;
   background:
-    linear-gradient(rgba(242, 241, 234, 0.82), rgba(242, 241, 234, 0.82)),
-    radial-gradient(circle at top, rgba(255,255,255,0.38), transparent 42%),
+    linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.08)),
     var(--arena-image, none);
-  background-size: cover, auto, cover;
+  background-size: cover, cover;
   background-position: center;
   border-radius: inherit;
   opacity: 1;
@@ -1262,16 +1261,24 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .leaderboard-columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 18px;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.35fr);
+  gap: 20px;
+  align-items: start;
 }
 .leaderboard-section {
   display: grid;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 18px;
   border-radius: 16px;
   background: var(--surface-soft) !important;
   border: 3px solid var(--border-strong) !important;
+}
+.leaderboard-section-daily {
+  height: fit-content;
+  align-self: start;
+}
+.leaderboard-section-daily .leaderboard-list {
+  gap: 10px;
 }
 .leaderboard-section-rating {
   background: var(--surface-soft) !important;
@@ -1730,7 +1737,8 @@ button:disabled { opacity: 0.6; cursor: default; }
     flex-direction: column;
   }
   .hero-redesign,
-  .home-subgrid {
+  .home-subgrid,
+  .leaderboard-columns {
     grid-template-columns: 1fr;
   }
   .featured-fighter {
@@ -1935,10 +1943,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 .arena {
-  background:
-    linear-gradient(rgba(242, 241, 234, 0.72), rgba(242, 241, 234, 0.72)),
-    linear-gradient(180deg, rgba(255,255,255,0.14), rgba(47, 107, 53, 0.04)),
-    var(--surface-main) !important;
+  background: url('/images/match_bg.png') center center / cover no-repeat !important;
 }
 
 .battle-log-wrap .log-line strong,
