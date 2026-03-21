@@ -1,10 +1,10 @@
 :root {
-  --bg: #f6f4df;
-  --bg-deep: #dff0cf;
-  --bg-elevated: rgba(252, 250, 237, 0.96);
-  --panel: rgba(252, 250, 238, 0.96);
-  --panel-light: rgba(236, 247, 223, 0.95);
-  --panel-strong: rgba(245, 240, 211, 0.98);
+  --bg: #7cfc00;
+  --bg-deep: #7cfc00;
+  --bg-elevated: #ffffff;
+  --panel: #ffffff;
+  --panel-light: #ffffff;
+  --panel-strong: #ffffff;
   --text: #234230;
   --text-soft: #355947;
   --muted: rgba(35, 66, 48, 0.72);
@@ -39,23 +39,11 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  background:
-    radial-gradient(circle at 12% 14%, rgba(127, 215, 216, 0.25), transparent 24%),
-    radial-gradient(circle at 88% 18%, rgba(157, 216, 95, 0.24), transparent 23%),
-    radial-gradient(circle at 48% 100%, rgba(244, 201, 79, 0.22), transparent 34%),
-    linear-gradient(180deg, #fcfaea, #f1f7df 34%, #e7f4df 68%, #eef7ee 100%);
+  background-color: #7CFC00;
   overflow-x: hidden;
 }
 body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background:
-    radial-gradient(circle at 20% 24%, rgba(255,255,255,0.88), transparent 16%),
-    radial-gradient(circle at 76% 20%, rgba(255,255,255,0.74), transparent 18%),
-    radial-gradient(circle at 60% 72%, rgba(255,255,255,0.42), transparent 20%);
+  content: none;
 }
 
 a { color: #2d7d45; }
@@ -198,6 +186,83 @@ button:disabled { opacity: 0.6; cursor: default; }
 .list-stagger > *:nth-child(5) { animation-delay: 140ms; }
 .list-stagger > *:nth-child(6) { animation-delay: 170ms; }
 
+.card,
+.challenge-card,
+.lobby-card,
+.panel,
+.ui-box,
+.world-card,
+.info-card,
+.leaderboard-section,
+.log-panel,
+.topbar,
+.audio-controls,
+.meta-pill,
+.hero-cta-block,
+.share-link-row,
+.activity-item,
+.preview-entry,
+.leaderboard-entry,
+.result-banner,
+.fighter-header,
+.status-card,
+.flow-chip {
+  background: #ffffff;
+  border: 4px solid #000000;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.card::before,
+.challenge-card::before,
+.lobby-card::before,
+.panel::before,
+.ui-box::before,
+.world-card::before,
+.info-card::before,
+.leaderboard-section::before,
+.log-panel::before,
+.topbar::before,
+.audio-controls::before,
+.meta-pill::before,
+.hero-cta-block::before,
+.share-link-row::before,
+.activity-item::before,
+.preview-entry::before,
+.leaderboard-entry::before,
+.result-banner::before,
+.fighter-header::before,
+.status-card::before,
+.flow-chip::before {
+  content: none;
+}
+
+.creature-container,
+.battle-scene,
+.animation-box,
+.arena,
+.arena-shell,
+.fighter-showcase,
+.goblin-frame,
+.home-preview-render,
+.sprite-render,
+.sprite-canvas,
+.sprite-fallback {
+  box-shadow: none !important;
+}
+
+.creature-container,
+.battle-scene,
+.animation-box,
+.arena,
+.fighter-showcase,
+.goblin-frame,
+.home-preview-render,
+.sprite-render {
+  background: transparent !important;
+  border: none !important;
+}
+
 .world-card,
 .panel,
 .info-card,
@@ -224,11 +289,9 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 .panel {
-  border-radius: 28px;
   padding: 20px;
 }
 .info-card {
-  border-radius: 22px;
   padding: 16px;
 }
 
@@ -562,7 +625,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 .challenge-card {
   margin-top: 6px;
-  padding: 20px;
+  padding: 16px;
   display: grid;
   gap: 14px;
   align-items: start;
@@ -1745,4 +1808,81 @@ button:disabled { opacity: 0.6; cursor: default; }
 .leaderboard-rank,
 .flow-chip span {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 18px rgba(99, 153, 113, 0.14);
+}
+
+/* Arcade card skin overrides */
+.card,
+.challenge-card,
+.lobby-card,
+.panel,
+.ui-box,
+.world-card,
+.info-card,
+.leaderboard-section,
+.log-panel,
+.topbar,
+.audio-controls,
+.meta-pill,
+.hero-cta-block,
+.share-link-row,
+.activity-item,
+.preview-entry,
+.leaderboard-entry,
+.result-banner,
+.fighter-header,
+.status-card,
+.flow-chip,
+.featured-fighter {
+  background: #ffffff !important;
+  border: 4px solid #000000 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.card::before,
+.challenge-card::before,
+.lobby-card::before,
+.panel::before,
+.ui-box::before,
+.world-card::before,
+.info-card::before,
+.leaderboard-section::before,
+.log-panel::before,
+.topbar::before,
+.audio-controls::before,
+.meta-pill::before,
+.hero-cta-block::before,
+.share-link-row::before,
+.activity-item::before,
+.preview-entry::before,
+.leaderboard-entry::before,
+.result-banner::before,
+.fighter-header::before,
+.status-card::before,
+.flow-chip::before,
+.featured-fighter::before,
+.main-showcase::after {
+  content: none !important;
+}
+
+.challenge-card,
+.card {
+  padding: 16px;
+}
+
+.creature-container,
+.battle-scene,
+.animation-box,
+.arena,
+.fighter-showcase,
+.goblin-frame,
+.home-preview-render,
+.sprite-render,
+.sprite-canvas,
+.sprite-fallback,
+.arena-background,
+.arena-floor {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
