@@ -65,6 +65,7 @@ create table if not exists public.ff_lite_daily_stats (
   day_bucket date not null,
   player_id text not null,
   display_name text not null,
+  variant_index integer not null default 0,
   wins integer not null default 0,
   losses integer not null default 0,
   draws integer not null default 0,
@@ -94,6 +95,7 @@ create policy "lite daily stats are updatable"
 create table if not exists public.ff_lite_player_ratings (
   player_id text primary key,
   display_name text not null,
+  variant_index integer not null default 0,
   rating integer not null default 1000,
   wins integer not null default 0,
   losses integer not null default 0,
