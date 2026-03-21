@@ -80,6 +80,7 @@ const SHARED_BACKEND_CONFIG = window.FF_LITE_CONFIG || {};
 const POLL_INTERVAL_MS = 2000;
 const MAX_BATTLE_LOG_ENTRIES = 24;
 const LEADERBOARD_DAY_TIMEZONE = 'UTC';
+const LEADERBOARD_PAGE_SIZE = 15;
 const LOG_EVENT_META = {
   attack: { icon: '⚔', label: 'Attack', className: 'is-attack', tone: 'Attack' },
   hit: { icon: '💥', label: 'Hit', className: 'is-hit', tone: 'Hit' },
@@ -284,6 +285,7 @@ const state = {
   logs: [],
   leaderboard: { daily: [], rating: [] },
   leaderboardStatus: { daily: 'idle', rating: 'idle' },
+  leaderboardPage: { daily: 1, rating: 1 },
   previewAnimators: [],
   currentCandidateCreature: null,
   selectedCreature: null,
@@ -1028,6 +1030,7 @@ function normalizeLeaderboardRow(record, type = 'daily') {
   return {
     playerId: record.player_id,
     name: record.display_name || 'Goblin',
+    variantIndex: getDeterministicVariantIndex(record.player_id || record.display_name || 'goblin', 'goblin'),
     wins,
     losses,
     draws,
@@ -2946,9 +2949,27 @@ function renderMatchOrPost() {
       </div>
     </section>`;
 }
-function renderLeaderboardRows(rows, type) {
+function clampLeaderboardPage(type, totalEntries) {
+  const totalPages = Math.max(1, Math.ceil(totalEntries / LEADERBOARD_PAGE_SIZE));
+  const nextPage = Math.min(Math.max(1, Number(state.leaderboardPage[type]) || 1), totalPages);
+  state.leaderboardPage = { ...state.leaderboardPage, [type]: nextPage };
+  return totalPages;
+}
+function setLeaderboardPage(type, page) {
+  const totalPages = Math.max(1, Math.ceil((state.leaderboard[type]?.length || 0) / LEADERBOARD_PAGE_SIZE));
+  const nextPage = Math.min(Math.max(1, page), totalPages);
+  if (state.leaderboardPage[type] === nextPage) return;
+  state.leaderboardPage = { ...state.leaderboardPage, [type]: nextPage };
+  render();
+}
+function getGoblinThumbnailStyle(variantIndex) {
+  const variant = PALETTE_VARIANTS[normalizeVariantIndex(variantIndex) ?? 0] || PALETTE_VARIANTS[0];
+  return `--thumb-hue:${variant.hue}deg; --thumb-sat:${variant.sat}; --thumb-bright:${variant.bright};`;
+}
+function renderLeaderboardRows(rows, type, page = 1) {
+  const pageOffset = (page - 1) * LEADERBOARD_PAGE_SIZE;
   return rows.map((row, index) => {
-    const rank = index + 1;
+    const rank = pageOffset + index + 1;
     const isTopThree = rank <= 3;
     const badge = rank === 1 ? 'Crown' : rank === 2 ? 'Silver' : rank === 3 ? 'Bronze' : null;
     const primaryValue = type === 'rating'
@@ -2959,6 +2980,7 @@ function renderLeaderboardRows(rows, type) {
         <div class="leaderboard-rank">#${rank}</div>
         ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
       </div>
+      <div class="leaderboard-thumbnail" aria-hidden="true" style="${getGoblinThumbnailStyle(row.variantIndex)}"></div>
       <div class="leaderboard-main">
         <div class="leaderboard-name">${row.name}</div>
         <div class="leaderboard-stats">
@@ -2975,16 +2997,28 @@ function renderLeaderboardSection(title, description, rows, status, type) {
     : status === 'error'
       ? 'Unable to load this leaderboard.'
       : 'No results yet.';
+  const totalPages = clampLeaderboardPage(type, rows.length);
+  const currentPage = state.leaderboardPage[type];
+  const startIndex = (currentPage - 1) * LEADERBOARD_PAGE_SIZE;
+  const paginatedRows = rows.slice(startIndex, startIndex + LEADERBOARD_PAGE_SIZE);
+  const showPagination = rows.length > LEADERBOARD_PAGE_SIZE;
   return `<section class="leaderboard-section leaderboard-section-${type} world-card card-lift">
     <div class="leaderboard-section-head">
       <div>
         <p class="leaderboard-kicker">${type === 'daily' ? 'Daily board' : 'Global ladder'}</p>
         <h2>${title}</h2>
       </div>
-      <p class="muted">${description}</p>
+      <div class="leaderboard-section-meta">
+        <p class="muted">${description}</p>
+        ${showPagination ? `<div class="leaderboard-pagination" aria-label="${title} pages">
+          <button class="leaderboard-page-btn ghost btn-ghost" data-page-dir="prev" data-page-type="${type}" ${currentPage === 1 ? 'disabled' : ''} aria-label="Previous ${title} page">‹</button>
+          <span class="leaderboard-page-indicator">${currentPage} / ${totalPages}</span>
+          <button class="leaderboard-page-btn ghost btn-ghost" data-page-dir="next" data-page-type="${type}" ${currentPage === totalPages ? 'disabled' : ''} aria-label="Next ${title} page">›</button>
+        </div>` : ''}
+      </div>
     </div>
     <div class="leaderboard-list list-stagger">
-      ${rows.length ? renderLeaderboardRows(rows, type) : `<div class="leaderboard-empty">${message}</div>`}
+      ${rows.length ? renderLeaderboardRows(paginatedRows, type, currentPage) : `<div class="leaderboard-empty">${message}</div>`}
     </div>
   </section>`;
 }
@@ -3069,6 +3103,14 @@ function render() {
   });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
   document.getElementById('nav-leaderboard')?.addEventListener('click', showLeaderboardScreen);
+  document.querySelectorAll('[data-page-type][data-page-dir]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const { pageType, pageDir } = button.dataset;
+      if (!pageType || !pageDir) return;
+      const delta = pageDir === 'next' ? 1 : -1;
+      setLeaderboardPage(pageType, (state.leaderboardPage[pageType] || 1) + delta);
+    });
+  });
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     const copyButton = document.getElementById('copy-link');
     try {
