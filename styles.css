@@ -990,7 +990,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 .match-layout {
-  --match-row-height: clamp(458px, calc(100vh - 292px), 588px);
+  --match-row-height: clamp(530px, calc(100vh - 220px), 660px);
   gap: 16px;
 }
 .match-shell,
@@ -1060,7 +1060,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   min-height: 0;
   block-size: 100%;
   padding: clamp(20px, 3vw, 28px);
-  padding-bottom: calc(clamp(20px, 3vw, 28px) + 12px);
+  padding-bottom: calc(clamp(20px, 3vw, 28px) + 20px);
   border-radius: 30px;
 }
 .arena-background {
@@ -1954,7 +1954,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 @media (max-width: 1200px) {
   .match-layout {
-    --match-row-height: clamp(448px, calc(100vh - 272px), 566px);
+    --match-row-height: clamp(500px, calc(100vh - 228px), 620px);
   }
   .match-content-row {
     grid-template-columns: minmax(0, 1.9fr) minmax(280px, 0.9fr);
