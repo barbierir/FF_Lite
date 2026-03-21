@@ -3010,12 +3010,12 @@ function renderLeaderboardRows(rows, type, page = 1) {
       ? `<div class="leaderboard-score">${row.rating}<span>rating</span></div>`
       : `<div class="leaderboard-score">${row.wins}<span>wins</span></div>`;
     return `<article class="leaderboard-entry card-lift ${isTopThree ? `podium podium-${rank}` : ''}">
-      <div class="leaderboard-rank-wrap">
-        <div class="leaderboard-rank">#${rank}</div>
-        ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
-      </div>
       <div class="leaderboard-main">
         <div class="leaderboard-identity">
+          <div class="leaderboard-identity-meta">
+            <span class="leaderboard-rank">#${rank}</span>
+            ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
+          </div>
           ${renderLeaderboardMiniPreview(row, rank)}
           <div class="leaderboard-name">${row.name}</div>
         </div>
