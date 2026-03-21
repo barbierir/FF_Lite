@@ -1623,6 +1623,45 @@ function clearRuntimeMatchState({ clearWatcher = false } = {}) {
   state.match = null;
   state.logs = [];
 }
+const MATCH_SLOT_ORDER = Object.freeze(['A', 'B']);
+const MATCH_SIDE_BY_SLOT = Object.freeze({ A: 'left', B: 'right' });
+const MATCH_PLAYER_LABEL_BY_SLOT = Object.freeze({ A: 'Player A', B: 'Player B' });
+const MATCH_DEBUG_LOGS_ENABLED = Boolean(window.FF_LITE_CONFIG?.debugMatchState);
+function debugMatchLog(event, payload) {
+  if (!MATCH_DEBUG_LOGS_ENABLED) return;
+  console.info(`[match] ${event}`, payload);
+}
+function getMatchRenderSide(slot) {
+  return MATCH_SIDE_BY_SLOT[slot] || 'left';
+}
+function getMatchPlayerLabel(slot) {
+  return MATCH_PLAYER_LABEL_BY_SLOT[slot] || slot || 'Player';
+}
+function normalizeMatchFighter(rawFighter, { fallbackSlot = 'A', fallbackHp = 100 } = {}) {
+  const slot = MATCH_SLOT_ORDER.includes(rawFighter?.slot) ? rawFighter.slot : fallbackSlot;
+  return {
+    ...rawFighter,
+    slot,
+    side: getMatchRenderSide(slot),
+    hp: Number.isFinite(Number(rawFighter?.hp)) ? Number(rawFighter.hp) : fallbackHp,
+    state: rawFighter?.state || 'idle',
+  };
+}
+function getMatchFighterBySlot(match, slot) {
+  return match?.fighters?.find((fighter) => fighter.slot === slot) || null;
+}
+function getCanonicalMatchResult(snapshot) {
+  if (!snapshot?.finished) return { winner: null, loser: null };
+  const winner = snapshot.winnerId ? getMatchFighterBySlot(snapshot, snapshot.winnerSlot || snapshot.fighters?.find((fighter) => fighter.id === snapshot.winnerId)?.slot) || snapshot.fighters?.find((fighter) => fighter.id === snapshot.winnerId) || null : null;
+  const loser = snapshot.loserId ? getMatchFighterBySlot(snapshot, snapshot.loserSlot || snapshot.fighters?.find((fighter) => fighter.id === snapshot.loserId)?.slot) || snapshot.fighters?.find((fighter) => fighter.id === snapshot.loserId) || null : null;
+  return { winner, loser };
+}
+function getCanonicalWinner(match = state.match) {
+  return getCanonicalMatchResult(match).winner;
+}
+function getCanonicalLoser(match = state.match) {
+  return getCanonicalMatchResult(match).loser;
+}
 function setError(message) {
   state.loading = false;
   state.errorMessage = message;
@@ -1631,18 +1670,17 @@ function setError(message) {
 }
 function getSharedMatchSnapshotRevision(sharedMatch) {
   if (!sharedMatch?.id) return null;
-  const progress = getSharedMatchProgress(sharedMatch);
-  return JSON.stringify({
-    id: sharedMatch.id,
-    status: sharedMatch.status || '',
-    turn: progress.sharedTurn,
-    finished: progress.finished,
-    winnerId: progress.winner?.id || null,
-    playerAId: sharedMatch.playerA?.id || null,
-    playerBId: sharedMatch.playerB?.id || null,
-    fighters: Array.isArray(progress.sharedState?.fighters) ? progress.sharedState.fighters : [],
-    logs: progress.logs,
-  });
+  const sharedState = sharedMatch.sharedState || {};
+  if (Number.isFinite(Number(sharedState.revision))) return Number(sharedState.revision);
+  if (sharedState.updatedAt) {
+    const ts = Date.parse(sharedState.updatedAt);
+    if (Number.isFinite(ts)) return ts;
+  }
+  if (sharedMatch.updatedAt) {
+    const ts = Date.parse(sharedMatch.updatedAt);
+    if (Number.isFinite(ts)) return ts;
+  }
+  return null;
 }
 function watchSharedMatch(matchId, onChange) {
   clearMatchWatcher();
@@ -1692,8 +1730,8 @@ function setPendingMatchState(nextPendingMatch) {
     const pendingMatch = state.pendingMatch;
     if (!sharedMatch || !pendingMatch || pendingMatch.payload?.id !== matchId || sharedMatch.id !== matchId) return;
     if (state.match && (state.screen === 'match' || state.screen === 'postmatch')) {
-      if (isSharedStateNewerThanLocal(sharedMatch)) {
-        const hydration = hydrateMatchFromSharedState(sharedMatch);
+      const hydration = hydrateMatchFromSharedState(sharedMatch);
+      if (hydration.accepted) {
         if (hydration.transitionedToPostmatch) {
           render();
         } else {
@@ -1865,27 +1903,66 @@ function queueMatchStart(payload) {
     runMatchSequence();
   }, 900);
 }
-function createResolvedMatch(payload) {
+// Canonical combat snapshot: shared combat truth lives here; transient animation timing stays in fighter.animationState/animators.
+function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
   const sharedState = payload.sharedState || {};
   const sharedFighters = Array.isArray(sharedState.fighters) ? sharedState.fighters : [];
-  const sharedPlayerA = sharedFighters.find((fighter) => fighter.slot === 'A');
-  const sharedPlayerB = sharedFighters.find((fighter) => fighter.slot === 'B');
-  const playerA = withResolvedVariant({ ...payload.playerA, variantIndex: sharedPlayerA?.variantIndex ?? payload.playerA?.variantIndex });
+  const sharedBySlot = new Map(sharedFighters.filter((fighter) => fighter?.slot).map((fighter) => [fighter.slot, fighter]));
+  const previousBySlot = new Map((previousMatch?.fighters || []).filter((fighter) => fighter?.slot).map((fighter) => [fighter.slot, fighter]));
+  const playerAState = sharedBySlot.get('A');
+  const playerBState = sharedBySlot.get('B');
+  const playerA = withResolvedVariant({ ...payload.playerA, variantIndex: playerAState?.variantIndex ?? payload.playerA?.variantIndex });
   const fallbackPlayerB = {
     id: 'auto-b', name: generateFunnyName(`${payload.id}:fallback`), creatureId: 'goblin',
   };
-  const playerB = withResolvedVariant({ ...(payload.playerB || fallbackPlayerB), variantIndex: sharedPlayerB?.variantIndex ?? payload.playerB?.variantIndex }, playerA.variantIndex, { preserveExisting: false });
+  const playerB = withResolvedVariant({ ...(payload.playerB || fallbackPlayerB), variantIndex: playerBState?.variantIndex ?? payload.playerB?.variantIndex }, playerA.variantIndex, { preserveExisting: false });
+  const baseBySlot = { A: playerA, B: playerB };
+  const revision = getSharedMatchSnapshotRevision(payload) ?? Number(previousMatch?.revision || 0);
+  const updatedAt = sharedState.updatedAt || payload.updatedAt || previousMatch?.updatedAt || payload.createdAt || new Date().toISOString();
+  const turn = Number.isFinite(Number(sharedState.turn)) ? Number(sharedState.turn) : Number(previousMatch?.turn || 0);
+  const logs = Array.isArray(sharedState.logs) ? sharedState.logs.filter((entry) => typeof entry === 'string' && entry.trim()).slice(0, MAX_BATTLE_LOG_ENTRIES) : [...(previousMatch?.logs || [])];
+  const lastAction = sharedState.lastAction || previousMatch?.lastAction || null;
+  const finished = payload.status === 'finished' || Boolean(sharedState.finishedAt);
+  const winnerId = sharedState.winnerId || sharedState.winner?.id || previousMatch?.winnerId || null;
+  const loserId = sharedState.loserId || previousMatch?.loserId || null;
+  const fighters = MATCH_SLOT_ORDER.map((slot) => {
+    const sharedFighter = normalizeMatchFighter(sharedBySlot.get(slot), { fallbackSlot: slot, fallbackHp: 100 });
+    const baseFighter = baseBySlot[slot] || {};
+    const previousFighter = previousBySlot.get(slot) || null;
+    const stateName = finished
+      ? (winnerId && sharedFighter.id === winnerId ? 'victory' : loserId && sharedFighter.id === loserId ? 'defeat' : sharedFighter.state || previousFighter?.state || 'idle')
+      : (sharedFighter.state || previousFighter?.state || 'idle');
+    return {
+      ...previousFighter,
+      ...baseFighter,
+      ...sharedFighter,
+      slot,
+      side: getMatchRenderSide(slot),
+      hp: sharedFighter.hp,
+      state: stateName,
+      animationState: previousFighter?.animationState || createAnimationState(stateName),
+    };
+  });
+  const winnerSlot = fighters.find((fighter) => fighter.id === winnerId)?.slot || null;
+  const loserSlot = fighters.find((fighter) => fighter.id === loserId)?.slot || null;
   return {
     id: payload.id,
+    revision,
+    updatedAt,
+    turn,
+    fighters,
+    finished,
+    winnerId,
+    loserId,
+    winnerSlot,
+    loserSlot,
+    logs,
+    lastAction,
     sharedState,
-    fighters: [
-      { slot: 'A', side: 'left', ...playerA, hp: Number(sharedPlayerA?.hp ?? 100), state: sharedPlayerA?.state || 'idle', animationState: createAnimationState(sharedPlayerA?.state || 'idle') },
-      { slot: 'B', side: 'right', ...playerB, hp: Number(sharedPlayerB?.hp ?? 100), state: sharedPlayerB?.state || 'idle', animationState: createAnimationState(sharedPlayerB?.state || 'idle') },
-    ],
-    turn: Number(sharedState.turn || 0),
-    finished: payload.status === 'finished',
-    winner: sharedState.winner || null,
   };
+}
+function createResolvedMatch(payload) {
+  return buildCanonicalMatchSnapshot(payload);
 }
 function refreshAudioControlsUI() {
   const toggle = document.getElementById('audio-toggle');
@@ -2168,19 +2245,37 @@ async function updateLeaderboardForResult(winner, loser, draw = false) {
 }
 async function syncSharedMatchState(extraState = {}) {
   if (!state.match || !isBackendConfigured()) return;
-  const winner = state.match.winner ? { id: state.match.winner.id, name: state.match.winner.name } : null;
+  const timestamp = new Date().toISOString();
+  state.match.revision = Math.max(0, Number(state.match.revision) || 0) + 1;
+  state.match.updatedAt = timestamp;
+  state.match.logs = [...state.logs];
+  const { winner, loser } = getCanonicalMatchResult(state.match);
   try {
     await updateSharedMatch(state.match.id, {
       status: state.match.finished ? 'finished' : 'active',
       shared_state: {
         ...state.match.sharedState,
         ...extraState,
-        finishedAt: state.match.finished ? new Date().toISOString() : undefined,
-        winner,
+        revision: state.match.revision,
+        updatedAt: timestamp,
+        finishedAt: state.match.finished ? timestamp : undefined,
+        winner: winner ? { id: winner.id, name: winner.name, slot: winner.slot } : null,
+        winnerId: winner?.id || null,
+        loserId: loser?.id || null,
         turn: state.match.turn,
+        lastAction: extraState.lastAction || state.match.lastAction || null,
         logs: [...state.logs],
         fighters: state.match.fighters.map(({ slot, id, name, hp, variantIndex, state: fighterState }) => ({ slot, id, name, hp, variantIndex, state: fighterState })),
       },
+    });
+    debugMatchLog('shared snapshot persisted', {
+      matchId: state.match.id,
+      revision: state.match.revision,
+      updatedAt: timestamp,
+      finished: state.match.finished,
+      winnerId: winner?.id || null,
+      loserId: loser?.id || null,
+      lastAction: extraState.lastAction || state.match.lastAction || null,
     });
   } catch (error) {
     console.error('Failed to persist match state', error);
@@ -2241,11 +2336,11 @@ function triggerResultEffects() {
     triggerTemporaryClass(finalLog, 'log-finale', COMBAT_EFFECT_DURATIONS.result);
   }
   state.match.fighters.forEach((fighter, index) => {
-    if (!state.match.winner) return;
+    if (!state.match.winnerId) return;
     const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
     if (!fighterNode || fighterNode.dataset.outcomeFx === 'true') return;
     fighterNode.dataset.outcomeFx = 'true';
-    if (fighter.id === state.match.winner.id) triggerFighterEffect(index, 'combat-victory', COMBAT_EFFECT_DURATIONS.victory);
+    if (fighter.id === state.match.winnerId) triggerFighterEffect(index, 'combat-victory', COMBAT_EFFECT_DURATIONS.victory);
     else triggerFighterEffect(index, 'combat-defeat', COMBAT_EFFECT_DURATIONS.defeat);
   });
 }
@@ -2271,25 +2366,27 @@ function attachButtonJuice(root = document) {
   });
 }
 function getResolvedMatchWinner(match = state.match) {
-  if (!match?.winner?.id) return null;
-  return match.fighters.find((fighter) => fighter.id === match.winner.id) || match.winner;
+  return getCanonicalWinner(match);
 }
 function getTerminalAnimationForFighter(index, match = state.match) {
   if (!match?.finished) return null;
   const fighter = match.fighters?.[index];
   if (!fighter) return null;
-  const winner = getResolvedMatchWinner(match);
-  if (!winner?.id) return 'idle';
-  return fighter.id === winner.id ? 'victory' : 'defeat';
+  const { winner, loser } = getCanonicalMatchResult(match);
+  if (winner?.id && fighter.id === winner.id) return 'victory';
+  if (loser?.id && fighter.id === loser.id) return 'defeat';
+  return 'idle';
 }
 function resolveTerminalMatchVisualState(source = 'unknown') {
   if (!state.match?.finished) return false;
-  const winner = getResolvedMatchWinner(state.match);
+  const { winner, loser } = getCanonicalMatchResult(state.match);
   const summary = {
     source,
     status: state.match.finished ? 'finished' : 'active',
-    winnerId: winner?.id || state.match.winner?.id || null,
-    winnerSlot: winner?.slot || state.match.fighters.find((fighter) => fighter.id === (state.match.winner?.id || null))?.slot || null,
+    winnerId: winner?.id || state.match.winnerId || null,
+    loserId: loser?.id || state.match.loserId || null,
+    winnerSlot: winner?.slot || state.match.winnerSlot || null,
+    loserSlot: loser?.slot || state.match.loserSlot || null,
     fighters: state.match.fighters.map((fighter, index) => ({
       index,
       id: fighter.id,
@@ -2325,7 +2422,7 @@ function setFighterState(index, animation, reason = 'direct') {
       attempted: normalizedAction,
       locked: lockedAnimation,
       status: state.match.finished ? 'finished' : 'active',
-      winnerId: state.match.winner?.id || null,
+      winnerId: state.match.winnerId || null,
     });
     return;
   }
@@ -2531,6 +2628,7 @@ async function runMatchSequence() {
   if (!(await guardStep(() => runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'intro', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.intro })))) return;
   while (guardActive() && !state.match.finished) {
     state.match.turn += 1;
+    state.match.lastAction = null;
     const attackerIndex = state.match.turn % 2 === 1 ? 0 : 1;
     const defenderIndex = attackerIndex === 0 ? 1 : 0;
     const fighters = getFighters();
@@ -2542,6 +2640,7 @@ async function runMatchSequence() {
       if (!guardActive()) return;
       if (!(await guardStep(() => runMatchActionGroup(group.actions, group.duration)))) return;
     }
+    state.match.lastAction = turnAction.type;
     if (!(await guardStep(() => syncSharedMatchState({ lastAction: turnAction.type })))) return;
     const [a, b] = getFighters();
     if (!a || !b) return;
@@ -2561,13 +2660,21 @@ async function finishMatch({ runId = state.activeMatchRunId, matchId = state.mat
   const [a, b] = state.match.fighters;
   if (!a || !b) return;
   state.match.finished = true;
+  debugMatchLog('finished transition', {
+    matchId: state.match.id,
+    revision: state.match.revision || null,
+    updatedAt: state.match.updatedAt || null,
+  });
   console.info('[match] finish start', {
     status: 'finished',
     fighterA: { id: a.id, slot: a.slot, side: a.side, hp: a.hp },
     fighterB: { id: b.id, slot: b.slot, side: b.side, hp: b.hp },
   });
   if (a.hp === b.hp) {
-    state.match.winner = null;
+    state.match.winnerId = null;
+    state.match.loserId = null;
+    state.match.winnerSlot = null;
+    state.match.loserSlot = null;
     setAllFighterStates('idle', 'finish-draw');
     resolveTerminalMatchVisualState('finish-draw');
     await updateLeaderboardForResult(null, null, true);
@@ -2575,9 +2682,20 @@ async function finishMatch({ runId = state.activeMatchRunId, matchId = state.mat
   } else {
     const winner = a.hp > b.hp ? a : b;
     const loser = winner === a ? b : a;
+    state.match.winnerId = winner.id;
+    state.match.loserId = loser.id;
+    state.match.winnerSlot = winner.slot;
+    state.match.loserSlot = loser.slot;
+    debugMatchLog('final result resolved', {
+      matchId: state.match.id,
+      winnerId: winner.id,
+      loserId: loser.id,
+      winnerSlot: winner.slot,
+      loserSlot: loser.slot,
+      turn: state.match.turn,
+    });
     winner.state = 'victory';
     loser.state = 'defeat';
-    state.match.winner = winner;
     resolveTerminalMatchVisualState('finish-local');
     await runMatchAction({
       type: 'finish',
@@ -2879,67 +2997,57 @@ function renderCreate() {
     </section>`;
 }
 function getSharedMatchProgress(sharedMatch) {
-  const sharedState = sharedMatch?.sharedState || {};
-  const sharedLogs = Array.isArray(sharedState.logs) ? sharedState.logs.filter((entry) => typeof entry === 'string' && entry.trim()) : [];
-  const sharedTurn = Number(sharedState.turn || 0);
-  const sharedFighters = Array.isArray(sharedState.fighters) ? sharedState.fighters : [];
-  const sharedHpBySlot = new Map();
-  const sharedStateBySlot = new Map();
-  sharedFighters.forEach((fighter) => {
-    if (!fighter?.slot) return;
-    const hp = Number(fighter.hp);
-    if (Number.isFinite(hp)) sharedHpBySlot.set(fighter.slot, hp);
-    if (fighter.state) sharedStateBySlot.set(fighter.slot, fighter.state);
-  });
+  const snapshot = buildCanonicalMatchSnapshot(sharedMatch, { previousMatch: state.match });
   return {
-    sharedState,
-    sharedTurn: Number.isFinite(sharedTurn) ? sharedTurn : 0,
-    sharedHpBySlot,
-    sharedStateBySlot,
-    winner: sharedState.winner || null,
-    finished: sharedMatch?.status === 'finished' || Boolean(sharedState.winner) || Boolean(sharedState.finishedAt),
-    logs: sharedLogs.slice(0, MAX_BATTLE_LOG_ENTRIES),
+    snapshot,
+    revision: snapshot.revision,
+    updatedAt: snapshot.updatedAt,
+    finished: snapshot.finished,
+    winnerId: snapshot.winnerId,
+    loserId: snapshot.loserId,
   };
 }
-function isSharedStateNewerThanLocal(sharedMatch) {
-  if (!state.match || !sharedMatch?.sharedState) return false;
-  const localTurn = Number(state.match.turn || 0);
-  const progress = getSharedMatchProgress(sharedMatch);
-  if (progress.sharedTurn > localTurn) return true;
-  if (progress.finished && !state.match.finished) return true;
-  if (progress.winner && !state.match.winner) return true;
-  return state.match.fighters.some((fighter) => {
-    const sharedHp = progress.sharedHpBySlot.get(fighter.slot);
-    return Number.isFinite(sharedHp) && sharedHp < fighter.hp;
+function isSharedSnapshotNewer(incomingSnapshot, currentSnapshot = state.match) {
+  if (!incomingSnapshot?.id) return false;
+  if (!currentSnapshot?.id) return true;
+  const incomingRevision = Number(incomingSnapshot.revision);
+  const currentRevision = Number(currentSnapshot.revision);
+  if (Number.isFinite(incomingRevision) && Number.isFinite(currentRevision)) return incomingRevision > currentRevision;
+  const incomingUpdatedAt = Date.parse(incomingSnapshot.updatedAt || '');
+  const currentUpdatedAt = Date.parse(currentSnapshot.updatedAt || '');
+  if (Number.isFinite(incomingUpdatedAt) && Number.isFinite(currentUpdatedAt)) return incomingUpdatedAt > currentUpdatedAt;
+  return false;
+}
+// Shared snapshots may replace local combat state only when strictly newer by revision/updatedAt.
+function getSharedHydrationDecision(sharedMatch, currentSnapshot = state.match) {
+  if (!sharedMatch?.id || !sharedMatch?.sharedState) {
+    return { accept: false, reason: 'missing-shared-state', snapshot: null };
+  }
+  const incomingSnapshot = buildCanonicalMatchSnapshot(sharedMatch, { previousMatch: currentSnapshot });
+  const accept = isSharedSnapshotNewer(incomingSnapshot, currentSnapshot);
+  const reason = !currentSnapshot ? 'no-local-snapshot' : accept ? 'newer-shared-snapshot' : 'stale-or-duplicate-shared-snapshot';
+  debugMatchLog('hydration decision', {
+    matchId: sharedMatch.id,
+    reason,
+    currentRevision: currentSnapshot?.revision || null,
+    incomingRevision: incomingSnapshot.revision || null,
+    currentUpdatedAt: currentSnapshot?.updatedAt || null,
+    incomingUpdatedAt: incomingSnapshot.updatedAt || null,
+    finished: incomingSnapshot.finished,
+    winnerId: incomingSnapshot.winnerId,
+    loserId: incomingSnapshot.loserId,
   });
+  return { accept, reason, snapshot: incomingSnapshot };
 }
 function hydrateMatchFromSharedState(sharedMatch) {
-  if (!state.match || !sharedMatch?.sharedState) return { transitionedToPostmatch: false, resolvedTerminalState: false };
-  const progress = getSharedMatchProgress(sharedMatch);
-  const localTurn = Number(state.match.turn || 0);
-  state.match.turn = Math.max(localTurn, progress.sharedTurn);
-  state.match.sharedState = {
-    ...state.match.sharedState,
-    ...progress.sharedState,
-    turn: state.match.turn,
-  };
-  state.match.fighters = state.match.fighters.map((fighter) => {
-    const sharedHp = progress.sharedHpBySlot.get(fighter.slot);
-    const sharedAnimationState = progress.sharedStateBySlot.get(fighter.slot);
-    return {
-      ...fighter,
-      hp: Number.isFinite(sharedHp) ? Math.min(fighter.hp, sharedHp) : fighter.hp,
-      state: sharedAnimationState || fighter.state || 'idle',
-      animationState: fighter.animationState || createAnimationState(sharedAnimationState || fighter.state || 'idle'),
-    };
-  });
-  if (progress.logs.length) state.logs = [...progress.logs];
-  if (progress.winner) state.match.winner = progress.winner;
-  if (progress.finished) state.match.finished = true;
+  const decision = getSharedHydrationDecision(sharedMatch, state.match);
+  if (!decision.accept || !decision.snapshot) return { transitionedToPostmatch: false, resolvedTerminalState: false, accepted: false };
+  state.match = decision.snapshot;
+  state.logs = [...decision.snapshot.logs];
   const resolvedTerminalState = resolveTerminalMatchVisualState('hydrate-shared');
-  const transitionedToPostmatch = Boolean(progress.finished && state.screen === 'match');
+  const transitionedToPostmatch = Boolean(decision.snapshot.finished && state.screen === 'match');
   if (transitionedToPostmatch) state.screen = 'postmatch';
-  return { transitionedToPostmatch, resolvedTerminalState };
+  return { transitionedToPostmatch, resolvedTerminalState, accepted: true };
 }
 
 function renderShareLinkRow(url, { buttonClass = 'btn-bounce', buttonLabel = 'Copy link' } = {}) {
@@ -2975,8 +3083,9 @@ function renderJoin() {
 }
 function renderMatchOrPost() {
   const isPost = state.screen === 'postmatch';
-  const result = state.match.winner
-    ? `${escapeHtml(state.match.winner.name)} wins!`
+  const resolvedWinner = getCanonicalWinner(state.match);
+  const result = resolvedWinner
+    ? `${escapeHtml(resolvedWinner.name)} wins!`
     : 'Draw!';
   return `
     <section class="panel match-layout world-card screen-panel">
@@ -2992,7 +3101,7 @@ function renderMatchOrPost() {
               <span class="status-chip chip-bounce" data-live="true">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
             </div>
           </div>
-          ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Both fighters survive the final stink burst.'}</div>` : ''}
+          ${isPost ? `<div class="result-banner"><strong>${result}</strong>${resolvedWinner ? '' : 'Both fighters survive the final stink burst.'}</div>` : ''}
         </div>
         <div class="match-content-row">
           <div class="match-main match-arena-column">
@@ -3004,7 +3113,7 @@ function renderMatchOrPost() {
                   <article class="fighter fighter-${fighter.side}" data-fighter="${index}" data-hp="${fighter.hp}">
                     <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}" data-fighter-header="${index}">
                       <div class="fighter-label-row">
-                        <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
+                        <span class="fighter-side">${getMatchPlayerLabel(fighter.slot)}</span>
                         <span class="fighter-state" data-fighter-state="${index}">${fighter.state || 'idle'}</span>
                       </div>
                       <div class="nameplate">${escapeHtml(fighter.name)}</div>
