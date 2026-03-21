@@ -91,7 +91,6 @@ const LOG_EVENT_META = {
   neutral: { icon: '•', label: 'System', className: 'is-system', tone: 'System' },
 };
 const INITIAL_RATING = 1000;
-const ELO_K_FACTOR = 24;
 const CREATURE_BONUS_POINT_CAP = 100;
 const CREATURE_BONUS_SCALE_MAX = 1000;
 const CREATURE_COMBAT_BONUS_KEYS = Object.freeze([
@@ -299,6 +298,7 @@ const state = {
   errorMessage: '',
   copyFeedback: '',
   resultApplyFeedback: '',
+  appliedMatchResultIds: {},
   reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false,
   featuredFighterTransitionTimer: null,
   featuredFighterTransitionToken: 0,
@@ -1170,44 +1170,27 @@ async function loadLeaderboard(options = {}) {
   ]);
   return { daily, rating };
 }
-function getResultTypeForOutcome(winner, draw = false) {
-  if (draw) return 'draw';
-  return winner?.slot === 'A' ? 'player_a_win' : 'player_b_win';
-}
-function buildMatchResultRpcPayload(match, winner, loser, draw = false) {
+function buildMatchResultRpcPayload(match, winner, draw = false) {
   const playerA = match?.fighters?.find((fighter) => fighter.slot === 'A') || null;
   const playerB = match?.fighters?.find((fighter) => fighter.slot === 'B') || null;
   if (!match?.id || !playerA?.id || !playerB?.id) {
     throw new Error('Missing match or fighter identifiers for result application.');
   }
-  const finishedAt = match?.sharedState?.finishedAt || new Date().toISOString();
   return {
-    p_match_id: match.id,
-    p_player_a_id: playerA.id,
-    p_player_a_name: playerA.name || 'Goblin',
-    p_player_a_variant_index: normalizeVariantIndex(playerA.variantIndex) ?? 0,
-    p_player_b_id: playerB.id,
-    p_player_b_name: playerB.name || 'Goblin',
-    p_player_b_variant_index: normalizeVariantIndex(playerB.variantIndex) ?? 0,
-    p_winner_id: draw ? null : (winner?.id || null),
-    p_result_type: getResultTypeForOutcome(winner, draw),
-    p_finished_at: finishedAt,
-    p_metadata: {
-      loser_id: loser?.id || null,
-      winner_slot: draw ? null : (winner?.slot || null),
-      loser_slot: loser?.slot || null,
-      source: 'ff_lite_client',
-    },
+    match_id: match.id,
+    player_a: playerA.id,
+    player_b: playerB.id,
+    winner: draw ? null : (winner?.id || null),
   };
 }
-async function applyMatchResultViaBackend(match, winner, loser, draw = false) {
+async function applyMatchResultViaBackend(match, winner, draw = false) {
   if (!isBackendConfigured()) return { applied: false, skipped: true, reason: 'backend_not_configured' };
-  const payload = buildMatchResultRpcPayload(match, winner, loser, draw);
+  const payload = buildMatchResultRpcPayload(match, winner, draw);
   console.info('[leaderboard] apply result rpc start', {
     currentPlayerId: state.me?.id || null,
     payload,
   });
-  const response = await supabaseRpc('apply_ff_lite_match_result', payload);
+  const response = await supabaseRpc('apply_match_result', payload);
   console.info('[leaderboard] apply result rpc success', {
     currentPlayerId: state.me?.id || null,
     matchId: match?.id || null,
@@ -2101,38 +2084,32 @@ function computeAction(attacker, defender, turn) {
   const damage = Math.round(intensity + (legacyRoll % 8));
   return { type: 'attack', amount: damage, text: `${attacker.name} hits ${defender.name} for ${damage} aromatic damage!` };
 }
-function isLeaderboardWriteOwner() {
-  const playerA = state.match?.fighters?.find((fighter) => fighter.slot === 'A') || null;
-  const fighter0 = state.match?.fighters?.[0] || null;
-  const currentFighter = state.match?.fighters?.find((fighter) => fighter.id === state.me?.id) || null;
-  const isOwner = Boolean(currentFighter?.slot === 'A' && playerA?.id && currentFighter.id === playerA.id);
-  console.info('[leaderboard] write owner check', {
-    currentPlayerId: state.me?.id || null,
-    fighter0Id: fighter0?.id || null,
-    playerAId: playerA?.id || null,
-    currentSlot: currentFighter?.slot || null,
-    passed: isOwner,
-  });
-  return isOwner;
-}
 async function updateLeaderboardForResult(winner, loser, draw = false) {
-  if (!state.match) return false;
-  const dayBucket = getCurrentLeaderboardDayBucket();
+  if (!state.match?.id) return false;
+  const matchId = state.match.id;
   const playerA = state.match.fighters.find((fighter) => fighter.slot === 'A') || null;
   const playerB = state.match.fighters.find((fighter) => fighter.slot === 'B') || null;
+  const alreadyApplied = Boolean(state.appliedMatchResultIds[matchId]);
   state.resultApplyFeedback = '';
   console.info('[leaderboard] update result start', {
     currentPlayerId: state.me?.id || null,
-    fighter0Id: state.match.fighters?.[0]?.id || null,
+    matchId,
     playerAId: playerA?.id || null,
     playerBId: playerB?.id || null,
-    dayBucket,
     draw,
     winnerId: winner?.id || null,
     loserId: loser?.id || null,
+    alreadyApplied,
   });
+  if (alreadyApplied) {
+    state.resultApplyFeedback = 'Result already synced. Leaderboards refreshed safely.';
+    await loadLeaderboard({ silent: state.screen !== 'leaderboard' && state.screen !== 'postmatch' });
+    render();
+    return true;
+  }
   try {
-    const result = await applyMatchResultViaBackend(state.match, winner, loser, draw);
+    const result = await applyMatchResultViaBackend(state.match, winner, draw);
+    state.appliedMatchResultIds[matchId] = true;
     if (result?.already_processed) {
       state.resultApplyFeedback = 'Result already synced. Leaderboards refreshed safely.';
     } else if (result?.skipped) {
@@ -2144,22 +2121,17 @@ async function updateLeaderboardForResult(winner, loser, draw = false) {
     render();
     return true;
   } catch (error) {
-    setLeaderboardRows('daily', []);
-    setLeaderboardRows('rating', []);
-    setLeaderboardStatus('daily', 'error');
-    setLeaderboardStatus('rating', 'error');
-    state.resultApplyFeedback = 'Result sync failed. You can retry safely by reopening the leaderboard.';
-    console.error('[leaderboard] update result failed', {
+    console.error('[leaderboard] apply_match_result failed', {
       currentPlayerId: state.me?.id || null,
-      fighter0Id: state.match.fighters?.[0]?.id || null,
+      matchId,
       playerAId: playerA?.id || null,
       playerBId: playerB?.id || null,
-      dayBucket,
       draw,
       winnerId: winner?.id || null,
       loserId: loser?.id || null,
       error: error?.message || error,
     });
+    state.resultApplyFeedback = 'Result sync failed; leaderboard refresh skipped.';
     render();
     return false;
   }
