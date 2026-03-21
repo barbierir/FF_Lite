@@ -71,13 +71,13 @@ const POLL_INTERVAL_MS = 2000;
 const MAX_BATTLE_LOG_ENTRIES = 24;
 const LEADERBOARD_DAY_TIMEZONE = 'UTC';
 const LOG_EVENT_META = {
-  attack: { icon: '✦', label: 'Attack', className: 'log-event-attack' },
-  hit: { icon: '✷', label: 'Hit', className: 'log-event-hit' },
-  backfire: { icon: '⟲', label: 'Backfire', className: 'log-event-backfire' },
-  charge: { icon: '⚡', label: 'Charge', className: 'log-event-charge' },
-  victory: { icon: '♕', label: 'Victory', className: 'log-event-victory' },
-  defeat: { icon: '◔', label: 'Defeat', className: 'log-event-defeat' },
-  neutral: { icon: '•', label: 'Info', className: 'log-event-neutral' },
+  attack: { icon: '⚔', label: 'Attack', className: 'is-attack', tone: 'Attack' },
+  hit: { icon: '💥', label: 'Hit', className: 'is-hit', tone: 'Hit' },
+  backfire: { icon: '⟲', label: 'Backfire', className: 'is-backfire', tone: 'Backfire' },
+  charge: { icon: '✦', label: 'Recharge', className: 'is-recharge', tone: 'Recharge' },
+  victory: { icon: '★', label: 'Victory', className: 'is-victory', tone: 'Victory' },
+  defeat: { icon: '☠', label: 'Defeat', className: 'is-defeat', tone: 'Defeat' },
+  neutral: { icon: '•', label: 'System', className: 'is-system', tone: 'System' },
 };
 const INITIAL_RATING = 1000;
 const ELO_K_FACTOR = 24;
@@ -1724,7 +1724,7 @@ function classifyBattleLogEvent(line) {
 function getLogEventMeta(type) {
   return LOG_EVENT_META[type] || LOG_EVENT_META.neutral;
 }
-function formatLogLine(line) {
+function highlightLogText(line) {
   const fighters = state.match?.fighters ?? [];
   let html = escapeHtml(line);
   fighters
@@ -1735,21 +1735,96 @@ function formatLogLine(line) {
       const safeName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       html = wrapLogMatches(html, new RegExp(safeName, 'g'), 'log-name');
     });
-  html = wrapLogMatches(html, /\b(hits|backfires|triumphs|collapses|charges|draw|preps|flings|holds|copied|manual)\b/gi, 'log-action');
-  html = wrapLogMatches(html, /\b\d+\b(?= aromatic damage|!)/gi, 'log-result');
-  html = wrapLogMatches(html, /\b(aromatic damage|boomerang|greenish haze|toxic|clipboard)\b/gi, 'log-result');
+  html = wrapLogMatches(html, /\b(attacks?|hits?|backfires?|triumphs?|collapses?|charges?|recharges?|draw|copied|manual|needed|wins?)\b/gi, 'log-action');
+  html = wrapLogMatches(html, /\b\d+\b(?=( aromatic damage| damage|!))/gi, 'log-result');
+  html = wrapLogMatches(html, /\b(aromatic damage|damage|boomerang blast|greenish haze|toxic draw|clipboard)\b/gi, 'log-result');
   return html;
+}
+function formatBattleFeedEntry(line, index) {
+  const rawLine = String(line || '').trim();
+  const eventType = classifyBattleLogEvent(rawLine);
+  const patterns = [
+    {
+      regex: /^(.+?) charges a suspicious blast\.$/i,
+      build: (match) => ({
+        eventType: 'charge',
+        headline: `${highlightLogText(match[1])} recharges`,
+        detail: 'Suspicious blast primed.',
+      }),
+    },
+    {
+      regex: /^(.+?) hits (.+?) for (\d+) aromatic damage!$/i,
+      build: (match) => ({
+        eventType: 'hit',
+        headline: `${highlightLogText(match[1])} hits ${highlightLogText(match[2])}`,
+        detail: `${highlightLogText(match[2])} takes <span class="log-result">${match[3]}</span> <span class="log-result">aromatic damage</span>.`,
+      }),
+    },
+    {
+      regex: /^(.+?) backfires with a boomerang blast for (\d+)!$/i,
+      build: (match) => ({
+        eventType: 'backfire',
+        headline: `${highlightLogText(match[1])} backfires`,
+        detail: `Boomerang blast lands for <span class="log-result">${match[2]}</span> <span class="log-result">damage</span>.`,
+      }),
+    },
+    {
+      regex: /^(.+?) triumphs in the greenish haze\.$/i,
+      build: (match) => ({
+        eventType: 'victory',
+        headline: `${highlightLogText(match[1])} wins`,
+        detail: 'Last goblin standing in the greenish haze.',
+      }),
+    },
+    {
+      regex: /^Toxic draw: nobody actually collapses\.$/i,
+      build: () => ({
+        eventType: 'neutral',
+        headline: 'Toxic draw',
+        detail: 'Nobody actually collapses.',
+      }),
+    },
+    {
+      regex: /^Link copied to the clipboard\.$/i,
+      build: () => ({
+        eventType: 'neutral',
+        headline: 'Link copied',
+        detail: 'Clipboard ready to share.',
+      }),
+    },
+    {
+      regex: /^Manual copy needed: (.+)$/i,
+      build: (match) => ({
+        eventType: 'neutral',
+        headline: 'Manual copy needed',
+        detail: highlightLogText(match[1]),
+      }),
+    },
+    {
+      regex: /^The goblins sniff each other suspiciously\.\.\.$/i,
+      build: () => ({
+        eventType: 'neutral',
+        headline: 'Battle starting',
+        detail: 'Both goblins size up the opener.',
+      }),
+    },
+  ];
+  const formatted = patterns
+    .map((entry) => ({ ...entry, match: rawLine.match(entry.regex) }))
+    .find((entry) => entry.match);
+  const content = formatted
+    ? formatted.build(formatted.match)
+    : { eventType, headline: highlightLogText(rawLine), detail: '' };
+  const resolvedType = content.eventType || eventType;
+  const meta = getLogEventMeta(resolvedType);
+  return `<article class="battle-feed__item ${meta.className} ${index === 0 ? 'is-latest' : ''}" data-log-row="${index % 2}" data-log-type="${resolvedType}"><span class="battle-feed__icon" aria-hidden="true">${meta.icon}</span><div class="battle-feed__body"><div class="battle-feed__meta"><span class="battle-feed__tone">${meta.tone}</span><span class="battle-feed__count">#${String(index + 1).padStart(2, '0')}</span></div><p class="battle-feed__headline"><span class="sr-only">${meta.label}: </span>${content.headline}</p>${content.detail ? `<p class="battle-feed__detail">${content.detail}</p>` : ''}</div></article>`;
 }
 function renderBattleLogEntries() {
   if (!state.logs.length) {
     const neutralMeta = getLogEventMeta('neutral');
-    return `<p class="log-empty ${neutralMeta.className}"><span class="log-icon" aria-hidden="true">${neutralMeta.icon}</span><span class="log-empty-body"><span class="log-empty-kicker">Battle starting…</span><span class="log-empty-copy">The goblins are eyeing each other and sizing up the stinkiest opener.</span></span></p>`;
+    return `<article class="battle-feed__item battle-feed__empty ${neutralMeta.className}" data-log-type="neutral"><span class="battle-feed__icon" aria-hidden="true">${neutralMeta.icon}</span><div class="battle-feed__body"><div class="battle-feed__meta"><span class="battle-feed__tone">${neutralMeta.tone}</span></div><p class="battle-feed__headline">Battle starting…</p><p class="battle-feed__detail">The goblins are eyeing each other and sizing up the stinkiest opener.</p></div></article>`;
   }
-  return state.logs.map((line, index) => {
-    const eventType = classifyBattleLogEvent(line);
-    const meta = getLogEventMeta(eventType);
-    return `<p class="log-line ${meta.className}" data-log-row="${index % 2}" data-log-type="${eventType}"><span class="log-index">${String(index + 1).padStart(2, '0')}</span><span class="log-icon" aria-hidden="true">${meta.icon}</span><span class="log-copy"><span class="sr-only">${meta.label}: </span>${formatLogLine(line)}</span></p>`;
-  }).join('');
+  return state.logs.map((line, index) => formatBattleFeedEntry(line, index)).join('');
 }
 function updateMatchUI() {
   if (!(state.screen === 'match' || state.screen === 'postmatch') || !state.match) return;
@@ -1778,7 +1853,7 @@ function updateMatchUI() {
       if (state.logs.length && shouldPinToLatest) {
         logPanel.scrollTo({ top: 0, behavior: state.reducedMotion ? 'auto' : 'smooth' });
       }
-      const firstNewEntry = logPanel.querySelector('.log-line');
+      const firstNewEntry = logPanel.querySelector('.battle-feed__item');
       if (firstNewEntry) triggerTemporaryClass(firstNewEntry, 'log-entry-in', 220);
     }
   }
@@ -1958,7 +2033,7 @@ function triggerResultEffects() {
     resultBanner.dataset.revealed = 'true';
     triggerTemporaryClass(resultBanner, 'result-reveal', COMBAT_EFFECT_DURATIONS.result);
   }
-  const finalLog = document.querySelector('#log-lines .log-line:first-child');
+  const finalLog = document.querySelector('#log-lines .battle-feed__item:first-child');
   if (finalLog && finalLog.dataset.finale !== 'true') {
     finalLog.dataset.finale = 'true';
     triggerTemporaryClass(finalLog, 'log-finale', COMBAT_EFFECT_DURATIONS.result);
@@ -2641,6 +2716,21 @@ function renderMatchOrPost() {
             <div id="log-lines" aria-live="polite" aria-atomic="false">
               ${renderBattleLogEntries()}
             </div>
+              <div class="health-bar" data-hp-wrap="${index}"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
+            </article>`).join('')}
+        </section>
+      </div>
+      <div class="battle-log-wrap">
+        <div class="log-panel world-card">
+          <div class="log-head-row">
+            <div class="log-heading-group">
+              <p class="log-heading">Battle Feed</p>
+              <p class="log-subheading">Compact combat updates stay pinned in the side panel for quick scanning.</p>
+            </div>
+            <span class="status-chip" data-live="true">Live feed</span>
+          </div>
+          <div id="log-lines" class="battle-feed" aria-live="polite" aria-atomic="false">
+            ${renderBattleLogEntries()}
           </div>
         </aside>
       </div>
