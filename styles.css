@@ -347,6 +347,19 @@ button:disabled { opacity: 0.6; cursor: default; }
   flex: 1;
   flex-wrap: wrap;
 }
+.topbar-nav-list {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.topbar-nav-list > li {
+  display: flex;
+}
 
 .creature-selector {
   display: grid;
@@ -1795,7 +1808,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   .panel { padding: 16px; border-radius: 22px; }
   .topbar { border-radius: 26px; }
   .topbar-nav { width: 100%; justify-content: stretch; }
-  .topbar-nav .nav-pill { flex: 1 1 calc(50% - 8px); }
+  .topbar-nav-list { width: 100%; justify-content: stretch; }
+  .topbar-nav-list > li { flex: 1 1 calc(50% - 8px); }
+  .topbar-nav .nav-pill { width: 100%; }
   .audio-controls { width: 100%; justify-content: center; }
   .challenge-card {
     width: 100%;

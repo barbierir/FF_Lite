@@ -2213,7 +2213,7 @@ function renderHome() {
     ? `<div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>`
     : '<div class="copy-feedback sr-only" aria-live="polite"></div>';
   const creatureSelector = `
-    <section class="panel world-card creature-selector card-lift" aria-labelledby="home-creature-title">
+    <section id="home-creature-selector" class="panel world-card creature-selector card-lift" aria-labelledby="home-creature-title">
       <div class="section-heading compact">
         <span class="section-kicker">Creature bay</span>
         <h2 class="section-title" id="home-creature-title">Choose your creature</h2>
@@ -2221,7 +2221,7 @@ function renderHome() {
       <div class="selector-copy">
         <p class="muted">Pick the goblin palette you want to use before creating a new challenge.</p>
       </div>
-      <div class="creature-selector-list" role="list" aria-label="Creature variants">
+      <div id="home-creature-grid" class="creature-selector-list" role="list" aria-label="Creature variants">
         ${PALETTE_VARIANTS.map((variant, index) => `
           <button
             type="button"
@@ -2236,33 +2236,33 @@ function renderHome() {
     </section>`;
 
   const challengePanel = isChallengerView ? `
-    <div class="world-card challenge-card challenge-card-active card-lift">
+    <div id="home-challenge-controls" class="world-card challenge-card challenge-card-active card-lift">
       <div class="section-heading compact">
         <span class="section-kicker">Live lobby</span>
         <h3>Challenge link ready</h3>
       </div>
       ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copy link' })}
-      ${copyFeedbackMarkup}
+      <div id="home-status-text">${copyFeedbackMarkup}</div>
       <div class="status-chip-row">
         <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting for Player B'}</span>
         <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
       </div>
     </div>` : state.pendingMatch ? `
-    <div class="world-card challenge-card card-lift">
+    <div id="home-challenge-controls" class="world-card challenge-card card-lift">
       <div class="section-heading compact">
         <span class="section-kicker">Share challenge</span>
         <h3>Link ready for the showdown</h3>
       </div>
       <p class="muted challenge-card-text">Create the match without leaving Home, then send the link to Player B.</p>
       ${renderShareLinkRow(state.pendingMatch.link, { buttonClass: 'btn-primary btn-bounce share-link-copy', buttonLabel: 'Copy link' })}
-      ${copyFeedbackMarkup}
+      <div id="home-status-text">${copyFeedbackMarkup}</div>
       ${state.pendingMatch.opponentJoined ? '<p class="muted challenge-card-text">Opponent found: the match will start on its own.</p>' : ''}
     </div>` : `
-    <div class="hero-cta-block cta-alive card-lift">
+    <div id="home-challenge-controls" class="hero-cta-block cta-alive card-lift">
       <div class="inline-actions hero-actions">
         <button class="btn-primary hero-cta btn-bounce" id="home-create">Create match</button>
       </div>
-      <p class="cta-note">Create a link, send it, fight live. Average match: ~45–60 sec.</p>
+      <p id="home-status-text" class="cta-note">Create a link, send it, fight live. Average match: ~45–60 sec.</p>
       <div class="how-it-works" aria-label="How it works">
         <div class="flow-chip chip-bounce"><span>1</span>Create match</div>
         <div class="flow-chip chip-bounce"><span>2</span>Share link</div>
@@ -2271,7 +2271,7 @@ function renderHome() {
     </div>`;
 
   return `
-    <section class="home-layout screen-panel">
+    <section id="home-main" class="home-layout screen-panel">
       <section class="panel hero hero-redesign world-card main-showcase" style="--home-world-image:url('${HOME_WORLD_BACKGROUND}')">
         <div class="hero-atmosphere" aria-hidden="true">
           <span class="world-wash"></span>
@@ -2584,7 +2584,7 @@ function render() {
   }
   app.innerHTML = `
     <main class="app-shell">
-      <nav class="topbar world-card">
+      <nav id="primary-nav" class="topbar world-card">
         <div class="brand-pill">
           <span class="brand-mark">FF</span>
           <div>
@@ -2592,9 +2592,11 @@ function render() {
           </div>
         </div>
         <div class="topbar-nav">
-          <button class="nav-pill btn-bounce ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button>
-          ${state.screen === 'home' || state.screen === 'boot' ? '' : '<button class="nav-pill nav-pill-accent btn-bounce" id="nav-create">Create match</button>'}
-          <button class="nav-pill btn-bounce ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button>
+          <ul class="topbar-nav-list" role="list">
+            <li><button class="nav-pill btn-bounce ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button></li>
+            ${state.screen === 'home' || state.screen === 'boot' ? '' : '<li><button class="nav-pill nav-pill-accent btn-bounce" id="nav-create">Create match</button></li>'}
+            <li><button class="nav-pill btn-bounce ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button></li>
+          </ul>
         </div>
         <div class="audio-controls" aria-label="Audio controls">
           <button class="ghost audio-toggle nav-pill btn-bounce" id="audio-toggle">${audioManager.preferences.muted || audioManager.preferences.volume === 0 ? '🔇' : '🔊'}</button>
