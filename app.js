@@ -302,6 +302,7 @@ const state = {
   featuredFighterTransitionTimer: null,
   featuredFighterTransitionToken: 0,
   featuredFighterTransitioning: false,
+  activeMatchRunId: 0,
 };
 state.selectedCreature = { ...state.me, animation: createCandidateAnimationConfig(state.me.seed || state.me.id) };
 
@@ -386,6 +387,16 @@ function preloadBattleAnimationAssets() {
   });
 }
 
+function safeLocalStorageSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn('[storage] setItem failed', { key, error: error?.message || error });
+    return false;
+  }
+}
+
 function loadAudioPreferences() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.audioPreferences) || 'null');
@@ -415,7 +426,7 @@ class AudioManager {
     this.boundResume = this.resumeFromInteraction.bind(this);
   }
   savePreferences() {
-    localStorage.setItem(STORAGE_KEYS.audioPreferences, JSON.stringify(this.preferences));
+    safeLocalStorageSetItem(STORAGE_KEYS.audioPreferences, JSON.stringify(this.preferences));
   }
   getEffectiveVolume(baseVolume = 1) {
     return this.preferences.muted ? 0 : clamp(baseVolume * this.preferences.volume, 0, 1);
@@ -965,7 +976,7 @@ function saveGoblinProfile(player = state.me) {
       permanentCombatBonuses: createCreatureCombatBonuses(goblin.permanentCombatBonuses),
     },
   };
-  localStorage.setItem(STORAGE_KEYS.localProfile, JSON.stringify(payload));
+  safeLocalStorageSetItem(STORAGE_KEYS.localProfile, JSON.stringify(payload));
   return buildPlayerProfile(payload.savedGoblin);
 }
 function loadSavedGoblin() {
@@ -1608,6 +1619,7 @@ function clearPendingStartTimer() {
 function clearRuntimeMatchState({ clearWatcher = false } = {}) {
   clearPendingStartTimer();
   if (clearWatcher) clearMatchWatcher();
+  state.activeMatchRunId += 1;
   state.match = null;
   state.logs = [];
 }
@@ -1617,23 +1629,51 @@ function setError(message) {
   state.screen = 'error';
   render();
 }
+function getSharedMatchSnapshotRevision(sharedMatch) {
+  if (!sharedMatch?.id) return null;
+  const progress = getSharedMatchProgress(sharedMatch);
+  return JSON.stringify({
+    id: sharedMatch.id,
+    status: sharedMatch.status || '',
+    turn: progress.sharedTurn,
+    finished: progress.finished,
+    winnerId: progress.winner?.id || null,
+    playerAId: sharedMatch.playerA?.id || null,
+    playerBId: sharedMatch.playerB?.id || null,
+    fighters: Array.isArray(progress.sharedState?.fighters) ? progress.sharedState.fighters : [],
+    logs: progress.logs,
+  });
+}
 function watchSharedMatch(matchId, onChange) {
   clearMatchWatcher();
   if (!matchId) return;
   const controller = new AbortController();
   const signal = controller.signal;
-  const poll = async () => {
+  let latestRequestId = 0;
+  let latestProcessedRevision = null;
+  const scheduleNextPoll = () => {
     if (signal.aborted) return;
+    window.setTimeout(runPoll, POLL_INTERVAL_MS);
+  };
+  const runPoll = async () => {
+    if (signal.aborted) return;
+    const requestId = ++latestRequestId;
     try {
       const match = await getSharedMatch(matchId);
-      if (!signal.aborted) onChange(match);
+      if (signal.aborted || requestId !== latestRequestId) return;
+      const revision = getSharedMatchSnapshotRevision(match);
+      if (revision && revision === latestProcessedRevision) {
+        scheduleNextPoll();
+        return;
+      }
+      latestProcessedRevision = revision;
+      onChange(match);
     } catch (error) {
       console.error(error);
     }
+    scheduleNextPoll();
   };
-  poll();
-  const pollId = window.setInterval(poll, POLL_INTERVAL_MS);
-  signal.addEventListener('abort', () => window.clearInterval(pollId), { once: true });
+  runPoll();
   state.activeMatchSubscription = controller;
 }
 function setPendingMatchState(nextPendingMatch) {
@@ -1731,6 +1771,7 @@ function showLeaderboardScreen() {
   loadLeaderboard();
 }
 async function startCreateFlow() {
+  if (state.loading || state.pendingStartTimer || (state.pendingMatch?.role === 'challenger' && !state.pendingMatch?.opponentJoined)) return;
   clearRuntimeMatchState();
   state.booting = false;
   state.loading = true;
@@ -1759,6 +1800,7 @@ async function startCreateFlow() {
   }
 }
 async function startJoinedFlow(matchId) {
+  if (state.loading || state.booting) return;
   state.booting = true;
   state.screen = 'boot';
   state.loading = false;
@@ -1816,6 +1858,7 @@ function queueMatchStart(payload) {
       state.logs = [];
     }
     state.screen = 'match';
+    state.activeMatchRunId += 1;
     state.match = createResolvedMatch(payload);
     state.logs = ['The goblins sniff each other suspiciously...'];
     render();
@@ -2000,7 +2043,7 @@ function updateMatchUI() {
   if (logPanel) {
     const nextMarkup = renderBattleLogEntries();
     if (logPanel.dataset.lastMarkup !== nextMarkup) {
-      const shouldPinToLatest = logPanel.scrollHeight - logPanel.scrollTop - logPanel.clientHeight < 28;
+      const shouldPinToLatest = logPanel.scrollTop < 28;
       logPanel.innerHTML = nextMarkup;
       logPanel.dataset.lastMarkup = nextMarkup;
       if (state.logs.length && shouldPinToLatest) {
@@ -2469,35 +2512,54 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
   });
   return groups;
 }
+function isActiveMatchRun(runId, matchId) {
+  return Boolean(state.match && state.activeMatchRunId === runId && state.match.id === matchId);
+}
 async function runMatchSequence() {
-  const [a, b] = state.match.fighters;
+  const initialMatch = state.match;
+  if (!initialMatch?.id) return;
+  const runId = state.activeMatchRunId;
+  const matchId = initialMatch.id;
+  const guardActive = () => isActiveMatchRun(runId, matchId);
+  const guardStep = async (step) => {
+    if (!guardActive()) return false;
+    await step();
+    return guardActive();
+  };
+  const getFighters = () => (guardActive() ? state.match.fighters : []);
   audioManager.syncHomePlayback();
-  await runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'intro', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.intro });
-  while (!state.match.finished) {
+  if (!(await guardStep(() => runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'intro', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.intro })))) return;
+  while (guardActive() && !state.match.finished) {
     state.match.turn += 1;
     const attackerIndex = state.match.turn % 2 === 1 ? 0 : 1;
     const defenderIndex = attackerIndex === 0 ? 1 : 0;
-    const attacker = state.match.fighters[attackerIndex];
-    const defender = state.match.fighters[defenderIndex];
+    const fighters = getFighters();
+    const attacker = fighters[attackerIndex];
+    const defender = fighters[defenderIndex];
+    if (!attacker || !defender) return;
     const turnAction = computeAction(attacker, defender, state.match.turn);
     for (const group of buildTurnActionGroups(attackerIndex, defenderIndex, turnAction)) {
-      await runMatchActionGroup(group.actions, group.duration);
+      if (!guardActive()) return;
+      if (!(await guardStep(() => runMatchActionGroup(group.actions, group.duration)))) return;
     }
-    await syncSharedMatchState({ lastAction: turnAction.type });
+    if (!(await guardStep(() => syncSharedMatchState({ lastAction: turnAction.type })))) return;
+    const [a, b] = getFighters();
+    if (!a || !b) return;
     if (a.hp <= 0 || b.hp <= 0 || state.match.turn >= 12) {
-      await finishMatch();
+      if (guardActive()) await finishMatch({ runId, matchId });
       return;
     }
-    await runMatchAction({ type: 'idle', animation: 'idle-all', duration: MATCH_ACTION_TIMINGS.idle });
+    if (!(await guardStep(() => runMatchAction({ type: 'idle', animation: 'idle-all', duration: MATCH_ACTION_TIMINGS.idle })))) return;
   }
-  if (state.match.finished) {
-    resolveTerminalMatchVisualState('sequence-exit');
-    if (state.screen === 'match') state.screen = 'postmatch';
-    render();
-  }
+  if (!guardActive() || !state.match?.finished) return;
+  resolveTerminalMatchVisualState('sequence-exit');
+  if (state.screen === 'match') state.screen = 'postmatch';
+  render();
 }
-async function finishMatch() {
+async function finishMatch({ runId = state.activeMatchRunId, matchId = state.match?.id } = {}) {
+  if (!isActiveMatchRun(runId, matchId) || !state.match?.fighters?.length) return;
   const [a, b] = state.match.fighters;
+  if (!a || !b) return;
   state.match.finished = true;
   console.info('[match] finish start', {
     status: 'finished',
@@ -2543,6 +2605,7 @@ async function finishMatch() {
     }
     await updateLeaderboardForResult(winner, loser, false);
   }
+  if (!isActiveMatchRun(runId, matchId) || !state.match) return;
   state.screen = 'postmatch';
   render();
   restoreMatchAnimators({ force: true });
@@ -2596,7 +2659,7 @@ function renderHome() {
       <div id="home-status-text">${copyFeedbackMarkup}</div>
       <div class="status-chip-row">
         <span class="status-chip chip-bounce" data-live="true">${state.pendingMatch.payload.status === 'active' ? 'Match active' : 'Waiting for Player B'}</span>
-        <span class="status-chip chip-bounce">Player B · ${state.pendingMatch.payload.playerB?.name || 'Not connected'}</span>
+        <span class="status-chip chip-bounce">Player B · ${escapeHtml(state.pendingMatch.payload.playerB?.name || 'Not connected')}</span>
       </div>
     </div>` : state.pendingMatch ? `
     <div id="home-challenge-controls" class="world-card challenge-card card-lift">
@@ -2611,7 +2674,7 @@ function renderHome() {
     </div>` : `
     <div id="home-challenge-controls" class="hero-cta-block cta-alive card-lift">
       <div class="inline-actions hero-actions">
-        <button class="btn-primary hero-cta btn-bounce" id="home-create">Create match</button>
+        <button class="btn-primary hero-cta btn-bounce" id="home-create" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Creating…' : 'Create match'}</button>
       </div>
       <p id="home-status-text" class="cta-note">Create a link, send it, fight live. Average match: ~45–60 sec.</p>
       <div class="how-it-works" aria-label="How it works">
@@ -2644,7 +2707,7 @@ function renderHome() {
           <div id="featured-fighter-content" class="featured-fighter-content">
             <div class="section-heading compact">
               <span class="section-kicker">Featured fighter</span>
-              <h3 id="featured-fighter-name">${candidate.name}</h3>
+              <h3 id="featured-fighter-name">${escapeHtml(candidate.name)}</h3>
             </div>
             <div id="featured-fighter-label-row" class="featured-fighter-label-row">
               ${isSavedGoblin ? '<span class="featured-fighter-tag">Your goblin · Saved locally</span>' : '<span class="featured-fighter-tag is-preview">Preview candidate</span>'}
@@ -2656,7 +2719,7 @@ function renderHome() {
               </div>
             </div>
             <p id="featured-fighter-copy" class="subtext">${isSavedGoblin ? getFeaturedFighterSummary(candidate, { isSavedGoblin }) : 'Small, loud, unpredictable. Built for ridiculous live duels.'}</p>
-            ${isChallengerView ? `<div id="featured-fighter-supporting" class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : '<div id="featured-fighter-supporting" class="subtext" hidden></div>'}
+            ${isChallengerView ? `<div id="featured-fighter-supporting" class="subtext">Match ID: ${escapeHtml(state.pendingMatch.payload.id)}</div>` : '<div id="featured-fighter-supporting" class="subtext" hidden></div>'}
           </div>
           <div class="featured-fighter-actions">
             <button id="featured-skip" class="ghost btn-ghost btn-bounce" type="button">Skip</button>
@@ -2693,7 +2756,7 @@ function renderHome() {
               <article class="preview-entry card-lift">
                 <div class="preview-rank">#${index + 1}</div>
                 <div class="preview-main">
-                  <strong>${row.name}</strong>
+                  <strong>${escapeHtml(row.name)}</strong>
                   <span>${row.wins}W · ${row.losses}L · ${row.draws}D</span>
                 </div>
                 <div class="preview-score">${row.rating || row.wins}</div>
@@ -2811,7 +2874,7 @@ function renderCreate() {
       <p class="muted">This screen checks the shared match every few seconds. When Player B joins, the match starts here automatically with no refresh needed.</p>
       <div class="goblin-preview" style="margin-top:18px;">
         ${renderAnimatedPreview('create', state.pendingMatch.payload.playerA.variantIndex)}
-        <div class="nameplate">${state.pendingMatch.payload.playerA.name}</div>
+        <div class="nameplate">${escapeHtml(state.pendingMatch.payload.playerA.name)}</div>
       </div>
     </section>`;
 }
@@ -2900,12 +2963,12 @@ function renderJoin() {
         </div>
         <p class="muted">You are Player B. The goblins are marching into the arena…</p>
         <div class="info-card world-card card-lift">
-          <strong>Host</strong><br/>${state.pendingMatch.payload.playerA.name}
+          <strong>Host</strong><br/>${escapeHtml(state.pendingMatch.payload.playerA.name)}
         </div>
       </div>
       <div class="goblin-preview">
         ${renderAnimatedPreview('join', playerB.variantIndex)}
-        <div class="nameplate">${playerB.name}</div>
+        <div class="nameplate">${escapeHtml(playerB.name)}</div>
         <div class="subtext">Get ready: the match starts by itself in a moment.</div>
       </div>
     </section>`;
@@ -2913,7 +2976,7 @@ function renderJoin() {
 function renderMatchOrPost() {
   const isPost = state.screen === 'postmatch';
   const result = state.match.winner
-    ? `${state.match.winner.name} wins!`
+    ? `${escapeHtml(state.match.winner.name)} wins!`
     : 'Draw!';
   return `
     <section class="panel match-layout world-card screen-panel">
@@ -2944,7 +3007,7 @@ function renderMatchOrPost() {
                         <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
                         <span class="fighter-state" data-fighter-state="${index}">${fighter.state || 'idle'}</span>
                       </div>
-                      <div class="nameplate">${fighter.name}</div>
+                      <div class="nameplate">${escapeHtml(fighter.name)}</div>
                       <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · arena ready</div>
                     </div>
                     <div class="fighter-slot">
@@ -3020,7 +3083,7 @@ function renderLeaderboardRows(rows, type, page = 1) {
         <div class="leaderboard-identity">
           <div class="leaderboard-identity-meta">
             <span class="leaderboard-rank">#${rank}</span>
-            <div class="leaderboard-name">${row.name}</div>
+            <div class="leaderboard-name">${escapeHtml(row.name)}</div>
             ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
           </div>
         </div>
@@ -3107,7 +3170,7 @@ function render() {
         <div class="topbar-nav">
           <ul class="topbar-nav-list" role="list">
             <li><button class="nav-pill btn-bounce ${state.screen === 'home' ? 'is-active' : ''}" id="nav-home">Home</button></li>
-            ${state.screen === 'home' || state.screen === 'boot' ? '' : '<li><button class="nav-pill nav-pill-accent btn-bounce" id="nav-create">Create match</button></li>'}
+            ${state.screen === 'home' || state.screen === 'boot' ? '' : `<li><button class="nav-pill nav-pill-accent btn-bounce" id="nav-create" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Creating…' : 'Create match'}</button></li>`}
             <li><button class="nav-pill btn-bounce ${state.screen === 'leaderboard' ? 'is-active' : ''}" id="nav-leaderboard">Leaderboard</button></li>
           </ul>
         </div>
