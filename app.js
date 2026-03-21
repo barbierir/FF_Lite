@@ -1577,8 +1577,13 @@ function getCanonicalWinner(match = state.match) {
 function getCanonicalLoser(match = state.match) {
   return getCanonicalMatchResult(match).loser;
 }
+function logSharedLink(event, details = {}) {
+  console.info(`[shared-link] ${event}`, details);
+}
 function setError(message) {
+  logSharedLink('error', { message, screen: state.screen, loading: state.loading, booting: state.booting });
   state.loading = false;
+  state.booting = false;
   state.errorMessage = message;
   state.screen = 'error';
   render();
@@ -1699,8 +1704,21 @@ function getJoinLink(matchId) {
   return url.toString();
 }
 function parseJoinMatchId() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('matchId');
+  const searchParams = new URLSearchParams(window.location.search);
+  const searchValue = searchParams.get('matchId')?.trim();
+  if (searchValue) {
+    logSharedLink('detected-join-param', { source: 'search', key: 'matchId', value: searchValue });
+    return searchValue;
+  }
+  const hash = window.location.hash?.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const hashParams = new URLSearchParams(hash || '');
+  const hashValue = hashParams.get('matchId')?.trim();
+  if (hashValue) {
+    logSharedLink('detected-join-param', { source: 'hash', key: 'matchId', value: hashValue });
+    return hashValue;
+  }
+  logSharedLink('detected-join-param', { source: 'none', key: 'matchId', value: null });
+  return '';
 }
 function resetToHome() {
   playUiSfx('navTab');
@@ -1753,17 +1771,25 @@ async function startCreateFlow() {
   }
 }
 async function startJoinedFlow(matchId) {
-  if (state.loading || state.booting) return;
+  if (state.loading) {
+    logSharedLink('join-skipped', { reason: 'loading-active', matchId, screen: state.screen });
+    return;
+  }
   state.booting = true;
   state.screen = 'boot';
   state.loading = false;
   state.errorMessage = '';
+  logSharedLink('boot-state-set', { matchId, screen: state.screen, loading: state.loading, booting: state.booting });
   render();
   try {
+    logSharedLink('fetch-started', { matchId });
     const hostMatch = await getSharedMatch(matchId);
+    logSharedLink('fetch-result', { matchId, found: Boolean(hostMatch), status: hostMatch?.status || null, hasPlayerA: Boolean(hostMatch?.playerA), hasPlayerB: Boolean(hostMatch?.playerB) });
     if (!hostMatch?.playerA) throw new Error('The shared match is incomplete and cannot start.');
     const playerB = withResolvedVariant(state.me, hostMatch.playerA.variantIndex, { preserveExisting: true });
+    logSharedLink('join-attempt-started', { matchId, playerBId: playerB.id, playerBName: playerB.name });
     const sharedMatch = await joinSharedMatch(matchId, { id: playerB.id, name: playerB.name, creatureId: playerB.creatureId, variantIndex: playerB.variantIndex });
+    logSharedLink('join-attempt-result', { matchId, status: sharedMatch?.status || null, hasPlayerA: Boolean(sharedMatch?.playerA), hasPlayerB: Boolean(sharedMatch?.playerB) });
     if (!sharedMatch?.playerA || !sharedMatch?.playerB) {
       throw new Error('The shared match is incomplete and cannot start.');
     }
@@ -1775,11 +1801,14 @@ async function startJoinedFlow(matchId) {
     state.screen = 'join';
     state.loading = false;
     state.booting = false;
+    logSharedLink('boot-state-cleared', { matchId: sharedMatch.id, screen: state.screen, loading: state.loading, booting: state.booting });
     audioManager.syncHomePlayback();
     render();
+    logSharedLink('screen-transition', { matchId: sharedMatch.id, screen: state.screen, nextAction: 'queueMatchStart' });
     queueMatchStart(sharedMatch);
   } catch (error) {
     console.error(error);
+    logSharedLink('join-failure', { matchId, message: error?.message || String(error) });
     setError(error.message || 'Unable to join the shared match.');
   }
 }
@@ -3305,8 +3334,8 @@ function bootApp() {
   audioManager.initializeForHome();
   const joinMatchId = parseJoinMatchId();
   if (joinMatchId) {
+    logSharedLink('boot-app-join-detected', { matchId: joinMatchId });
     state.screen = 'boot';
-    state.booting = true;
     render();
     startJoinedFlow(joinMatchId);
     return;
