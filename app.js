@@ -298,6 +298,7 @@ const state = {
   booting: false,
   errorMessage: '',
   copyFeedback: '',
+  resultApplyFeedback: '',
   reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false,
   featuredFighterTransitionTimer: null,
   featuredFighterTransitionToken: 0,
@@ -1169,134 +1170,50 @@ async function loadLeaderboard(options = {}) {
   ]);
   return { daily, rating };
 }
-function getExpectedEloScore(ratingA, ratingB) {
-  return 1 / (1 + 10 ** ((ratingB - ratingA) / 400));
+function getResultTypeForOutcome(winner, draw = false) {
+  if (draw) return 'draw';
+  return winner?.slot === 'A' ? 'player_a_win' : 'player_b_win';
 }
-function calculateEloRatings(ratingA, ratingB, scoreA, scoreB, kFactor = ELO_K_FACTOR) {
-  const expectedA = getExpectedEloScore(ratingA, ratingB);
-  const expectedB = getExpectedEloScore(ratingB, ratingA);
-  return {
-    expectedA,
-    expectedB,
-    newRatingA: Math.round(ratingA + kFactor * (scoreA - expectedA)),
-    newRatingB: Math.round(ratingB + kFactor * (scoreB - expectedB)),
-  };
-}
-async function getPlayerRatingRecord(playerId) {
-  if (!playerId || !isBackendConfigured()) return null;
-  const rows = await supabaseRequest(`ff_lite_player_ratings?player_id=eq.${encodeURIComponent(playerId)}&select=*`, { method: 'GET', prefer: undefined });
-  return rows?.[0] || null;
-}
-async function upsertPlayerRating(player, updates) {
-  if (!player?.id || !isBackendConfigured()) return null;
-  const payload = {
-    player_id: player.id,
-    display_name: player.name,
-    rating: Math.round(Number(updates.rating ?? INITIAL_RATING)),
-    wins: Number(updates.wins || 0),
-    losses: Number(updates.losses || 0),
-    draws: Number(updates.draws || 0),
-    matches_played: Number(updates.matchesPlayed || 0),
-    updated_at: new Date().toISOString(),
-    variant_index: normalizeVariantIndex(player.variantIndex) ?? 0,
-  };
-  return upsertLeaderboardRecord('ff_lite_player_ratings?on_conflict=player_id', payload);
-}
-async function updateGlobalRatingsForResult(playerA, playerB, result) {
-  if (!playerA?.id || !playerB?.id) return null;
-  const [currentA, currentB] = await Promise.all([
-    getPlayerRatingRecord(playerA.id),
-    getPlayerRatingRecord(playerB.id),
-  ]);
-  const ratingA = Number(currentA?.rating || INITIAL_RATING);
-  const ratingB = Number(currentB?.rating || INITIAL_RATING);
-  const scoreA = result === 'A' ? 1 : result === 'draw' ? 0.5 : 0;
-  const scoreB = result === 'B' ? 1 : result === 'draw' ? 0.5 : 0;
-  // Standard Elo update: expected score depends on the rating gap, then each player moves by K * (actual - expected).
-  const nextRatings = calculateEloRatings(ratingA, ratingB, scoreA, scoreB);
-  const nextA = {
-    rating: nextRatings.newRatingA,
-    wins: Number(currentA?.wins || 0) + (result === 'A' ? 1 : 0),
-    losses: Number(currentA?.losses || 0) + (result === 'B' ? 1 : 0),
-    draws: Number(currentA?.draws || 0) + (result === 'draw' ? 1 : 0),
-    matchesPlayed: Number(currentA?.matches_played || 0) + 1,
-  };
-  const nextB = {
-    rating: nextRatings.newRatingB,
-    wins: Number(currentB?.wins || 0) + (result === 'B' ? 1 : 0),
-    losses: Number(currentB?.losses || 0) + (result === 'A' ? 1 : 0),
-    draws: Number(currentB?.draws || 0) + (result === 'draw' ? 1 : 0),
-    matchesPlayed: Number(currentB?.matches_played || 0) + 1,
-  };
-  await Promise.all([
-    upsertPlayerRating(playerA, nextA),
-    upsertPlayerRating(playerB, nextB),
-  ]);
-  return {
-    playerA: { previous: ratingA, next: nextRatings.newRatingA, expected: nextRatings.expectedA },
-    playerB: { previous: ratingB, next: nextRatings.newRatingB, expected: nextRatings.expectedB },
-  };
-}
-
-async function upsertDailyStat(player, increments) {
-  if (!player?.id || !isBackendConfigured()) {
-    console.warn('[leaderboard] upsert skipped', {
-      playerId: player?.id || null,
-      currentPlayerId: state.me?.id || null,
-      backendConfigured: isBackendConfigured(),
-    });
-    return null;
+function buildMatchResultRpcPayload(match, winner, loser, draw = false) {
+  const playerA = match?.fighters?.find((fighter) => fighter.slot === 'A') || null;
+  const playerB = match?.fighters?.find((fighter) => fighter.slot === 'B') || null;
+  if (!match?.id || !playerA?.id || !playerB?.id) {
+    throw new Error('Missing match or fighter identifiers for result application.');
   }
-  const dayBucket = getCurrentLeaderboardDayBucket();
-  console.info('[leaderboard] upsert start', {
+  const finishedAt = match?.sharedState?.finishedAt || new Date().toISOString();
+  return {
+    p_match_id: match.id,
+    p_player_a_id: playerA.id,
+    p_player_a_name: playerA.name || 'Goblin',
+    p_player_a_variant_index: normalizeVariantIndex(playerA.variantIndex) ?? 0,
+    p_player_b_id: playerB.id,
+    p_player_b_name: playerB.name || 'Goblin',
+    p_player_b_variant_index: normalizeVariantIndex(playerB.variantIndex) ?? 0,
+    p_winner_id: draw ? null : (winner?.id || null),
+    p_result_type: getResultTypeForOutcome(winner, draw),
+    p_finished_at: finishedAt,
+    p_metadata: {
+      loser_id: loser?.id || null,
+      winner_slot: draw ? null : (winner?.slot || null),
+      loser_slot: loser?.slot || null,
+      source: 'ff_lite_client',
+    },
+  };
+}
+async function applyMatchResultViaBackend(match, winner, loser, draw = false) {
+  if (!isBackendConfigured()) return { applied: false, skipped: true, reason: 'backend_not_configured' };
+  const payload = buildMatchResultRpcPayload(match, winner, loser, draw);
+  console.info('[leaderboard] apply result rpc start', {
     currentPlayerId: state.me?.id || null,
-    playerId: player.id,
-    dayBucket,
-    increments,
+    payload,
   });
-  try {
-    const existingRows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&player_id=eq.${encodeURIComponent(player.id)}&select=*`, { method: 'GET', prefer: undefined });
-    console.info('[leaderboard] upsert existing row', {
-      currentPlayerId: state.me?.id || null,
-      playerId: player.id,
-      dayBucket,
-      existingRow: existingRows?.[0] || null,
-    });
-    const current = existingRows?.[0];
-    const next = {
-      day_bucket: dayBucket,
-      player_id: player.id,
-      display_name: player.name,
-      wins: Number(current?.wins || 0) + (increments.wins || 0),
-      losses: Number(current?.losses || 0) + (increments.losses || 0),
-      draws: Number(current?.draws || 0) + (increments.draws || 0),
-      matches_played: Number(current?.matches_played || 0) + (increments.matchesPlayed || 0),
-      variant_index: normalizeVariantIndex(player.variantIndex) ?? normalizeVariantIndex(current?.variant_index) ?? 0,
-    };
-    console.info('[leaderboard] upsert write', {
-      currentPlayerId: state.me?.id || null,
-      playerId: player.id,
-      dayBucket,
-      payload: next,
-    });
-    const response = await upsertLeaderboardRecord('ff_lite_daily_stats?on_conflict=day_bucket,player_id', next);
-    console.info('[leaderboard] upsert success', {
-      currentPlayerId: state.me?.id || null,
-      playerId: player.id,
-      dayBucket,
-      response,
-    });
-    return response;
-  } catch (error) {
-    console.error('[leaderboard] upsert failed', {
-      currentPlayerId: state.me?.id || null,
-      playerId: player.id,
-      dayBucket,
-      increments,
-      error: error?.message || error,
-    });
-    throw error;
-  }
+  const response = await supabaseRpc('apply_ff_lite_match_result', payload);
+  console.info('[leaderboard] apply result rpc success', {
+    currentPlayerId: state.me?.id || null,
+    matchId: match?.id || null,
+    response,
+  });
+  return response;
 }
 
 class SpriteSheetAnimator {
@@ -1534,12 +1451,12 @@ function mapRecordToMatch(record) {
     sharedState: record.shared_state || {},
   };
 }
-async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) {
+async function supabaseRequest(pathname, { method = 'GET', body, prefer, rpc = false } = {}) {
   if (!isBackendConfigured()) {
     throw new Error('Backend not configured. Add supabaseUrl and supabaseAnonKey to ff.config.js.');
   }
   const normalizedMethod = String(method || 'GET').toUpperCase();
-  const response = await fetch(`${getBackendBaseUrl()}/rest/v1/${pathname}`, {
+  const response = await fetch(`${getBackendBaseUrl()}/rest/v1/${rpc ? `rpc/${pathname}` : pathname}`, {
     method: normalizedMethod,
     headers: getBackendHeaders(prefer),
     body: body ? JSON.stringify(body) : undefined,
@@ -1564,6 +1481,16 @@ async function supabaseRequest(pathname, { method = 'GET', body, prefer } = {}) 
   if (response.status === 204) return null;
   return response.json();
 }
+
+async function supabaseRpc(name, body) {
+  return supabaseRequest(name, {
+    method: 'POST',
+    body,
+    prefer: undefined,
+    rpc: true,
+  });
+}
+
 async function createSharedMatch(payload) {
   const rows = await supabaseRequest('ff_lite_matches', {
     method: 'POST',
@@ -2193,46 +2120,40 @@ async function updateLeaderboardForResult(winner, loser, draw = false) {
   const dayBucket = getCurrentLeaderboardDayBucket();
   const playerA = state.match.fighters.find((fighter) => fighter.slot === 'A') || null;
   const playerB = state.match.fighters.find((fighter) => fighter.slot === 'B') || null;
-  const writeOwner = isLeaderboardWriteOwner();
+  state.resultApplyFeedback = '';
   console.info('[leaderboard] update result start', {
     currentPlayerId: state.me?.id || null,
     fighter0Id: state.match.fighters?.[0]?.id || null,
     playerAId: playerA?.id || null,
     playerBId: playerB?.id || null,
-    writeOwner,
     dayBucket,
     draw,
     winnerId: winner?.id || null,
     loserId: loser?.id || null,
   });
-  if (!writeOwner) return false;
   try {
-    if (draw) {
-      await Promise.all([
-        upsertDailyStat(playerA, { draws: 1, matchesPlayed: 1 }),
-        upsertDailyStat(playerB, { draws: 1, matchesPlayed: 1 }),
-      ]);
+    const result = await applyMatchResultViaBackend(state.match, winner, loser, draw);
+    if (result?.already_processed) {
+      state.resultApplyFeedback = 'Result already synced. Leaderboards refreshed safely.';
+    } else if (result?.skipped) {
+      state.resultApplyFeedback = 'Shared backend not configured; leaderboard sync skipped.';
     } else {
-      await Promise.all([
-        upsertDailyStat(winner, { wins: 1, matchesPlayed: 1 }),
-        upsertDailyStat(loser, { losses: 1, matchesPlayed: 1 }),
-      ]);
+      state.resultApplyFeedback = 'Result synced to the shared ladder.';
     }
-    const result = draw ? 'draw' : winner?.slot === 'A' ? 'A' : 'B';
-    await updateGlobalRatingsForResult(playerA, playerB, result);
-    await loadLeaderboard({ silent: state.screen !== 'leaderboard' });
+    await loadLeaderboard({ silent: state.screen !== 'leaderboard' && state.screen !== 'postmatch' });
+    render();
     return true;
   } catch (error) {
     setLeaderboardRows('daily', []);
     setLeaderboardRows('rating', []);
     setLeaderboardStatus('daily', 'error');
     setLeaderboardStatus('rating', 'error');
+    state.resultApplyFeedback = 'Result sync failed. You can retry safely by reopening the leaderboard.';
     console.error('[leaderboard] update result failed', {
       currentPlayerId: state.me?.id || null,
       fighter0Id: state.match.fighters?.[0]?.id || null,
       playerAId: playerA?.id || null,
       playerBId: playerB?.id || null,
-      writeOwner,
       dayBucket,
       draw,
       winnerId: winner?.id || null,
@@ -3101,7 +3022,8 @@ function renderMatchOrPost() {
               <span class="status-chip chip-bounce" data-live="true">${isPost ? 'Fight ended' : 'Fight in progress'}</span>
             </div>
           </div>
-          ${isPost ? `<div class="result-banner"><strong>${result}</strong>${resolvedWinner ? '' : 'Both fighters survive the final stink burst.'}</div>` : ''}
+          ${isPost ? `<div class="result-banner"><strong>${result}</strong>${resolvedWinner ? '' : 'Both fighters survive the final stink burst.'}</div>
+          ${state.resultApplyFeedback ? `<div class="copy-feedback" aria-live="polite">${escapeHtml(state.resultApplyFeedback)}</div>` : ''}` : ''}
         </div>
         <div class="match-content-row">
           <div class="match-main match-arena-column">

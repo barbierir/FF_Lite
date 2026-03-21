@@ -29,99 +29,39 @@ Lite matchmaking now uses a **Supabase table as the shared source of truth** for
 - daily leaderboard stats keyed by UTC calendar day
 - persistent global Elo-style player ratings
 
-### 1. Create the table in Supabase
+### 1. Create the tables and RPC in Supabase
 
-Run this SQL in the Supabase SQL editor:
+Run the baseline schema plus the Phase 3 integrity migration in the Supabase SQL editor. The client now treats the database RPC as the **single authoritative match-result application path** for daily leaderboard stats and persistent ratings.
 
-```sql
-create table if not exists public.ff_lite_matches (
-  id text primary key,
-  status text not null check (status in ('waiting', 'active', 'finished')),
-  created_at timestamptz not null default timezone('utc', now()),
-  player_a jsonb not null,
-  player_b jsonb,
-  shared_state jsonb not null default '{}'::jsonb
-);
-
-alter table public.ff_lite_matches enable row level security;
-
-create policy "lite matches are readable"
-  on public.ff_lite_matches
-  for select
-  using (true);
-
-create policy "lite matches are insertable"
-  on public.ff_lite_matches
-  for insert
-  with check (true);
-
-create policy "lite matches are updatable"
-  on public.ff_lite_matches
-  for update
-  using (true)
-  with check (true);
-
-create table if not exists public.ff_lite_daily_stats (
-  day_bucket date not null,
-  player_id text not null,
-  display_name text not null,
-  variant_index integer not null default 0,
-  wins integer not null default 0,
-  losses integer not null default 0,
-  draws integer not null default 0,
-  matches_played integer not null default 0,
-  primary key (day_bucket, player_id)
-);
-
-alter table public.ff_lite_daily_stats enable row level security;
-
-create policy "lite daily stats are readable"
-  on public.ff_lite_daily_stats
-  for select
-  using (true);
-
-create policy "lite daily stats are insertable"
-  on public.ff_lite_daily_stats
-  for insert
-  with check (true);
-
-create policy "lite daily stats are updatable"
-  on public.ff_lite_daily_stats
-  for update
-  using (true)
-  with check (true);
-
-
-create table if not exists public.ff_lite_player_ratings (
-  player_id text primary key,
-  display_name text not null,
-  variant_index integer not null default 0,
-  rating integer not null default 1000,
-  wins integer not null default 0,
-  losses integer not null default 0,
-  draws integer not null default 0,
-  matches_played integer not null default 0,
-  updated_at timestamptz not null default timezone('utc', now())
-);
-
-alter table public.ff_lite_player_ratings enable row level security;
-
-create policy "lite player ratings are readable"
-  on public.ff_lite_player_ratings
-  for select
-  using (true);
-
-create policy "lite player ratings are insertable"
-  on public.ff_lite_player_ratings
-  for insert
-  with check (true);
-
-create policy "lite player ratings are updatable"
-  on public.ff_lite_player_ratings
-  for update
-  using (true)
-  with check (true);
+```bash
+# Run these checked-in SQL files in the Supabase SQL editor, in order.
+cat db/migrations/001_add_ff_lite_player_ratings.sql
+cat db/migrations/002_phase3_atomic_match_result.sql
 ```
+
+The Phase 3 migration adds:
+
+- `ff_lite_applied_match_results` for idempotent bookkeeping keyed by `match_id`
+- indexes/constraints/defaults for leaderboard and rating rows
+- the `apply_ff_lite_match_result(...)` RPC, which atomically updates daily stats and both rating rows in one transaction
+- RLS tightening so leaderboard tables stay publicly readable but should no longer accept raw anonymous inserts/updates
+
+
+### Authoritative result flow
+
+`apply_ff_lite_match_result(...)` now owns all critical progression writes:
+
+- verifies the `match_id` has not already been processed
+- inserts a bookkeeping row into `ff_lite_applied_match_results`
+- atomically upserts both players into `ff_lite_daily_stats`
+- locks both rating rows, computes Elo from current ratings, and updates both players together
+- returns `already_processed = true` for safe retries / duplicate client calls
+
+The client still determines the battle outcome and persists the shared match snapshot, but it **no longer reads current leaderboard/rating rows to merge increments locally**.
+
+### Security note
+
+For this prototype, public reads stay open for leaderboard rendering, while direct public insert/update access to `ff_lite_daily_stats` and `ff_lite_player_ratings` should be removed in favor of the RPC above. That shrinks the anonymous write surface without forcing a full auth redesign yet.
 
 ### 2. Add runtime config
 
