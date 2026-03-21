@@ -43,13 +43,13 @@ The Phase 3 migration adds:
 
 - `ff_lite_applied_match_results` for idempotent bookkeeping keyed by `match_id`
 - indexes/constraints/defaults for leaderboard and rating rows
-- the `apply_ff_lite_match_result(...)` RPC, which atomically updates daily stats and both rating rows in one transaction
+- the `apply_match_result(...)` RPC, which atomically updates daily stats and both rating rows in one transaction
 - RLS tightening so leaderboard tables stay publicly readable but should no longer accept raw anonymous inserts/updates
 
 
 ### Authoritative result flow
 
-`apply_ff_lite_match_result(...)` now owns all critical progression writes:
+`apply_match_result(...)` now owns all critical progression writes:
 
 - verifies the `match_id` has not already been processed
 - inserts a bookkeeping row into `ff_lite_applied_match_results`
