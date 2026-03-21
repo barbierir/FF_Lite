@@ -2253,7 +2253,6 @@ function renderStatusCard(title, body, { showHomeButton = true } = {}) {
 
 function renderHome() {
   const candidate = ensureCurrentCandidateCreature();
-  const activeCreature = getActiveCreatureSelection();
   const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
   const isChallengerView = state.homeView === 'challenger' && state.pendingMatch?.payload?.playerA?.id === state.me.id;
   const liveItems = [
@@ -2333,17 +2332,12 @@ function renderHome() {
               <div class="sprite-fallback" hidden></div>
             </div>
           </div>
-          <div class="fighter-tags">
-            <span id="featured-fighter-class" class="status-chip chip-bounce">Class · Bog goblin</span>
-            <span id="featured-fighter-trait" class="status-chip chip-bounce">Trait · Variant ${candidate.variantIndex + 1}</span>
-          </div>
           <p id="featured-fighter-copy" class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
           ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
           <div class="featured-fighter-actions">
             <button id="featured-skip" class="ghost btn-ghost btn-bounce" type="button">Skip</button>
             <button id="featured-choose" class="btn-primary btn-bounce" type="button" ${isSelected ? 'disabled' : ''}>${isSelected ? 'Chosen' : 'Choose'}</button>
           </div>
-          <div id="featured-selection-state" class="subtext" aria-live="polite">${isSelected ? `${candidate.name} locked in for your next match.` : `${activeCreature.name} is queued unless you choose a different fighter.`}</div>
         </aside>
       </section>
 
@@ -2408,21 +2402,12 @@ function syncFeaturedPreview(candidate = ensureCurrentCandidateCreature()) {
   });
 }
 function updateFeaturedFighter(candidate = ensureCurrentCandidateCreature()) {
-  const activeCreature = getActiveCreatureSelection();
   const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
   const nameNode = document.getElementById('featured-fighter-name');
-  const classNode = document.getElementById('featured-fighter-class');
-  const traitNode = document.getElementById('featured-fighter-trait');
   const copyNode = document.getElementById('featured-fighter-copy');
-  const stateNode = document.getElementById('featured-selection-state');
   const chooseButton = document.getElementById('featured-choose');
   if (nameNode) nameNode.textContent = candidate.name;
-  if (classNode) classNode.textContent = 'Class · Bog goblin';
-  if (traitNode) traitNode.textContent = `Trait · Variant ${candidate.variantIndex + 1}`;
   if (copyNode) copyNode.textContent = 'Small, loud, unpredictable. Built for ridiculous live duels.';
-  if (stateNode) stateNode.textContent = isSelected
-    ? `${candidate.name} locked in for your next match.`
-    : `${activeCreature.name} is queued unless you choose a different fighter.`;
   if (chooseButton) {
     chooseButton.disabled = isSelected;
     chooseButton.textContent = isSelected ? 'Chosen' : 'Choose';
