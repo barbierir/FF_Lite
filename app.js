@@ -1177,11 +1177,16 @@ function buildMatchResultRpcPayload(match, winner, draw = false) {
     throw new Error('Missing match or fighter identifiers for result application.');
   }
   return {
-    match_id: match.id,
-    player_a: playerA.id,
-    player_b: playerB.id,
-    winner: draw ? null : (winner?.id || null),
+    p_match_id: match.id,
+    p_player_a: playerA.id,
+    p_player_b: playerB.id,
+    p_winner: draw ? null : (winner?.id || null),
   };
+}
+function didApplyMatchResultSucceed(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  if (result.success !== true) return false;
+  return result.applied === true || result.already_processed === true;
 }
 async function applyMatchResultViaBackend(match, winner, draw = false) {
   if (!isBackendConfigured()) return { applied: false, skipped: true, reason: 'backend_not_configured' };
@@ -2109,13 +2114,30 @@ async function updateLeaderboardForResult(winner, loser, draw = false) {
   }
   try {
     const result = await applyMatchResultViaBackend(state.match, winner, draw);
-    state.appliedMatchResultIds[matchId] = true;
-    if (result?.already_processed) {
-      state.resultApplyFeedback = 'Result already synced. Leaderboards refreshed safely.';
-    } else if (result?.skipped) {
+    const didSucceed = didApplyMatchResultSucceed(result);
+    if (didSucceed) {
+      state.appliedMatchResultIds[matchId] = true;
+    }
+    if (result?.skipped) {
       state.resultApplyFeedback = 'Shared backend not configured; leaderboard sync skipped.';
-    } else {
+    } else if (result?.already_processed && didSucceed) {
+      state.resultApplyFeedback = 'Result already synced. Leaderboards refreshed safely.';
+    } else if (result?.applied && didSucceed) {
       state.resultApplyFeedback = 'Result synced to the shared ladder.';
+    } else {
+      console.error('[leaderboard] apply_match_result returned invalid result', {
+        currentPlayerId: state.me?.id || null,
+        matchId,
+        playerAId: playerA?.id || null,
+        playerBId: playerB?.id || null,
+        draw,
+        winnerId: winner?.id || null,
+        loserId: loser?.id || null,
+        result,
+      });
+      state.resultApplyFeedback = 'Result sync failed; leaderboard refresh skipped.';
+      render();
+      return false;
     }
     await loadLeaderboard({ silent: state.screen !== 'leaderboard' && state.screen !== 'postmatch' });
     render();
