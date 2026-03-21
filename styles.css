@@ -514,7 +514,6 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .status-chip-row,
 .hero-badges,
-.fighter-tags,
 .match-status-cluster {
   display: flex;
   gap: 10px;
@@ -1443,7 +1442,6 @@ button:disabled { opacity: 0.6; cursor: default; }
 .log-head-row,
 .leaderboard-header,
 .match-status-cluster,
-.fighter-tags,
 .hero-badges,
 .footer-actions,
 .inline-actions {
@@ -1458,7 +1456,6 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 .status-chip-row .status-chip,
-.fighter-tags .status-chip,
 .hero-badges .badge,
 .match-status-cluster .status-chip,
 .leaderboard-top-meta .badge {
@@ -1866,7 +1863,6 @@ button:disabled { opacity: 0.6; cursor: default; }
   .how-it-works,
   .status-chip-row,
   .hero-badges,
-  .fighter-tags,
   .match-status-cluster,
   .leaderboard-top-meta {
     gap: 10px;
