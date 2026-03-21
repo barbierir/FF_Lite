@@ -989,7 +989,10 @@ button:disabled { opacity: 0.6; cursor: default; }
   justify-content: flex-start;
 }
 
-.match-layout { gap: 16px; }
+.match-layout {
+  --match-row-height: clamp(430px, calc(100vh - 320px), 560px);
+  gap: 16px;
+}
 .match-shell,
 .match-head,
 .match-content-row {
@@ -1007,20 +1010,27 @@ button:disabled { opacity: 0.6; cursor: default; }
   align-content: start;
 }
 .match-content-row {
-  grid-template-columns: minmax(0, 2.2fr) minmax(280px, 0.95fr);
+  grid-template-columns: minmax(720px, 2.2fr) minmax(300px, 0.95fr);
   gap: clamp(16px, 2vw, 24px);
   align-items: stretch;
+  min-height: 0;
+  block-size: var(--match-row-height);
 }
 .match-main,
 .match-sidebar {
   align-self: stretch;
   margin: 0;
+  min-width: 0;
+  min-height: 0;
 }
 .match-arena-column,
 .match-feed-column,
 .battle-log-wrap,
 .arena-shell {
+  width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 .match-meta {
   display: flex;
@@ -1033,7 +1043,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   position: relative;
   isolation: isolate;
   min-width: 0;
+  min-height: 0;
   display: flex;
+  width: 100%;
 }
 .arena {
   position: relative;
@@ -1041,6 +1053,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: clamp(10px, 2vw, 18px);
   align-items: end;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: clamp(380px, 56vw, 520px);
   padding: clamp(20px, 3vw, 28px);
   border-radius: 30px;
@@ -1185,11 +1200,13 @@ button:disabled { opacity: 0.6; cursor: default; }
   flex-direction: column;
   width: 100%;
   height: 100%;
+  min-height: 0;
 }
 .battle-feed-card__body {
   min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .log-head-row {
   display: flex;
@@ -1874,6 +1891,15 @@ button:disabled { opacity: 0.6; cursor: default; }
   }
 }
 
+@media (max-width: 1200px) {
+  .match-layout {
+    --match-row-height: clamp(420px, calc(100vh - 300px), 540px);
+  }
+  .match-content-row {
+    grid-template-columns: minmax(0, 1.9fr) minmax(280px, 0.9fr);
+  }
+}
+
 @media (max-width: 900px) {
   .topbar,
   .match-meta {
@@ -1885,6 +1911,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   .leaderboard-columns,
   .match-content-row {
     grid-template-columns: 1fr;
+  }
+  .match-content-row {
+    block-size: auto;
   }
   .featured-fighter {
     order: -1;
