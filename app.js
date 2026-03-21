@@ -1,7 +1,17 @@
 const STORAGE_KEYS = {
+  localProfile: 'ff-lite-local-profile-v2',
   playerProfile: 'ff-lite-player-profile',
   audioPreferences: 'ff-lite-audio-preferences',
 };
+const LOCAL_PROFILE_SCHEMA_VERSION = 2;
+const LEGACY_GOBLIN_STORAGE_KEYS = Object.freeze([
+  STORAGE_KEYS.playerProfile,
+  'ff-lite-selected-creature',
+  'ff-lite-creature-cache',
+  'ff-lite-featured-creature',
+  'ff-lite-featured-fighter',
+  'ff-lite-profile',
+]);
 
 const ACTION_ASSET_BASE_NAMES = {
   idle: 'idle',
@@ -291,6 +301,7 @@ const state = {
   featuredFighterTransitionToken: 0,
   featuredFighterTransitioning: false,
 };
+state.selectedCreature = { ...state.me, animation: createCandidateAnimationConfig(state.me.seed || state.me.id) };
 
 function normalizeAnimationAction(action) {
   return ACTION_ASSET_BASE_NAMES[action] ? action : 'idle';
@@ -870,6 +881,9 @@ function ensureCurrentCandidateCreature(forceNew = false) {
   state.currentCandidateCreature = buildCandidateCreature(crypto.randomUUID(), previous);
   return state.currentCandidateCreature;
 }
+function getFeaturedFighterCandidate() {
+  return state.currentCandidateCreature || state.selectedCreature || ensureCurrentCandidateCreature();
+}
 function getActiveCreatureSelection() {
   return state.selectedCreature || state.currentCandidateCreature || ensureCurrentCandidateCreature();
 }
@@ -878,30 +892,129 @@ function buildPlayerProfile(profile = {}) {
   const creatureId = profile.creatureId || 'goblin';
   const id = profile.id || crypto.randomUUID();
   const variantIndex = normalizeVariantIndex(profile.variantIndex) ?? getDeterministicVariantIndex(id, creatureId);
+  const wins = Math.max(0, Math.floor(Number(profile.wins) || 0));
+  const level = Math.max(1, Math.floor(Number(profile.level) || 1));
   return {
     id,
+    seed: profile.seed || id,
     name: profile.name || generateFunnyName(id),
     creatureId,
     variantIndex,
     variant: PALETTE_VARIANTS[variantIndex],
+    wins,
+    level,
     permanentCombatBonuses: createCreatureCombatBonuses(profile.permanentCombatBonuses),
   };
 }
-function saveLocalPlayer(player = state.me) {
-  localStorage.setItem(STORAGE_KEYS.playerProfile, JSON.stringify({
-    id: player.id,
-    name: player.name,
-    creatureId: player.creatureId,
-    variantIndex: player.variantIndex,
-    permanentCombatBonuses: createCreatureCombatBonuses(player.permanentCombatBonuses),
-  }));
+function sanitizeStoredGoblinProfile(storedGoblin = {}) {
+  if (!storedGoblin || typeof storedGoblin !== 'object') return null;
+  const creatureId = storedGoblin.creatureId || 'goblin';
+  const id = typeof storedGoblin.id === 'string' && storedGoblin.id.trim() ? storedGoblin.id.trim() : '';
+  const seed = typeof storedGoblin.seed === 'string' && storedGoblin.seed.trim() ? storedGoblin.seed.trim() : id;
+  const name = typeof storedGoblin.name === 'string' && storedGoblin.name.trim() ? storedGoblin.name.trim() : '';
+  const variantIndex = normalizeVariantIndex(Number.isInteger(storedGoblin.variantIndex) ? storedGoblin.variantIndex : Number(storedGoblin.variantIndex));
+  const wins = Math.floor(Number(storedGoblin.wins));
+  const level = Math.floor(Number(storedGoblin.level));
+  if (!id || !seed || !name || creatureId !== 'goblin' || variantIndex == null) return null;
+  if (!Number.isFinite(wins) || wins < 0 || !Number.isFinite(level) || level < 1) return null;
+  return buildPlayerProfile({
+    ...storedGoblin,
+    id,
+    seed,
+    name,
+    creatureId,
+    variantIndex,
+    wins,
+    level,
+    permanentCombatBonuses: createCreatureCombatBonuses(storedGoblin.permanentCombatBonuses),
+  });
 }
-function loadLocalPlayer() {
-  const stored = getStoredPlayerProfile();
-  const player = buildPlayerProfile(stored || {});
-  saveLocalPlayer(player);
+function clearLegacyGoblinCache() {
+  LEGACY_GOBLIN_STORAGE_KEYS.forEach((key) => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore storage cleanup failures and keep booting.
+    }
+  });
+}
+function getStoredLocalGoblinProfile() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.localProfile) || 'null');
+    if (!stored || typeof stored !== 'object') return null;
+    if (stored.version !== LOCAL_PROFILE_SCHEMA_VERSION) return null;
+    return sanitizeStoredGoblinProfile(stored.savedGoblin);
+  } catch {
+    return null;
+  }
+}
+function saveGoblinProfile(player = state.me) {
+  const goblin = buildPlayerProfile(player || {});
+  const payload = {
+    version: LOCAL_PROFILE_SCHEMA_VERSION,
+    savedGoblin: {
+      id: goblin.id,
+      seed: goblin.seed || goblin.id,
+      name: goblin.name,
+      creatureId: goblin.creatureId,
+      variantIndex: goblin.variantIndex,
+      wins: Math.max(0, Math.floor(Number(goblin.wins) || 0)),
+      level: Math.max(1, Math.floor(Number(goblin.level) || 1)),
+      permanentCombatBonuses: createCreatureCombatBonuses(goblin.permanentCombatBonuses),
+    },
+  };
+  localStorage.setItem(STORAGE_KEYS.localProfile, JSON.stringify(payload));
+  return buildPlayerProfile(payload.savedGoblin);
+}
+function loadSavedGoblin() {
+  clearLegacyGoblinCache();
+  const saved = getStoredLocalGoblinProfile();
+  const player = saved || buildPlayerProfile();
+  saveGoblinProfile(player);
   return player;
 }
+function replaceSavedGoblin(candidate = ensureCurrentCandidateCreature()) {
+  const nextGoblin = buildPlayerProfile({
+    id: candidate.id,
+    seed: candidate.seed || candidate.id,
+    name: candidate.name,
+    creatureId: candidate.creatureId,
+    variantIndex: candidate.variantIndex,
+    wins: 0,
+    level: 1,
+    permanentCombatBonuses: createCreatureCombatBonuses(),
+  });
+  state.me = saveGoblinProfile(nextGoblin);
+  state.selectedCreature = { ...state.me, animation: candidate.animation || createCandidateAnimationConfig(candidate.id) };
+  return state.me;
+}
+function updateGoblinProgression(updater) {
+  const current = buildPlayerProfile(state.me || {});
+  const updates = typeof updater === 'function' ? updater(current) : updater;
+  const next = buildPlayerProfile({
+    ...current,
+    ...(updates || {}),
+    wins: Math.max(0, Math.floor(Number(updates?.wins ?? current.wins) || 0)),
+    level: Math.max(1, Math.floor(Number(updates?.level ?? current.level) || 1)),
+    permanentCombatBonuses: createCreatureCombatBonuses(updates?.permanentCombatBonuses ?? current.permanentCombatBonuses),
+  });
+  state.me = saveGoblinProfile(next);
+  if (state.selectedCreature && state.selectedCreature.id === state.me.id) {
+    state.selectedCreature = { ...state.selectedCreature, ...state.me, variant: state.me.variant };
+  }
+  return state.me;
+}
+function loadLocalPlayer() {
+  return loadSavedGoblin();
+}
+window.__ffLiteClearLocalGoblinState = () => {
+  clearLegacyGoblinCache();
+  try {
+    localStorage.removeItem(STORAGE_KEYS.localProfile);
+  } catch {
+    // Ignore manual reset failures in dev helper.
+  }
+};
 
 function getCurrentLeaderboardDayBucket() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: LEADERBOARD_DAY_TIMEZONE }).format(new Date());
@@ -1588,7 +1701,7 @@ async function startCreateFlow() {
   playUiSfx('createMatch');
   render();
   try {
-    const activeCreature = getActiveCreatureSelection();
+    const activeCreature = state.selectedCreature || getFeaturedFighterCandidate();
     const playerForMatch = { ...state.me, name: activeCreature.name, creatureId: activeCreature.creatureId, variantIndex: activeCreature.variantIndex, variant: activeCreature.variant };
     const payload = makeMatchPayload(playerForMatch);
     const sharedMatch = await createSharedMatch(payload);
@@ -1616,9 +1729,7 @@ async function startJoinedFlow(matchId) {
   try {
     const hostMatch = await getSharedMatch(matchId);
     if (!hostMatch?.playerA) throw new Error('The shared match is incomplete and cannot start.');
-    const playerB = withResolvedVariant(state.me, hostMatch.playerA.variantIndex, { preserveExisting: false });
-    state.me = playerB;
-    saveLocalPlayer(playerB);
+    const playerB = withResolvedVariant(state.me, hostMatch.playerA.variantIndex, { preserveExisting: true });
     const sharedMatch = await joinSharedMatch(matchId, { id: playerB.id, name: playerB.name, creatureId: playerB.creatureId, variantIndex: playerB.variantIndex });
     if (!sharedMatch?.playerA || !sharedMatch?.playerB) {
       throw new Error('The shared match is incomplete and cannot start.');
@@ -1876,6 +1987,11 @@ function createSeededCombatRng(seed) {
     return stateSeed / 0x100000000;
   };
 }
+function getFighterCombatBonuses(fighter) {
+  if (!fighter?.id) return createCreatureCombatBonuses();
+  if (state.me?.id === fighter.id) return createCreatureCombatBonuses(state.me.permanentCombatBonuses);
+  return createCreatureCombatBonuses(fighter.permanentCombatBonuses);
+}
 function computeAction(attacker, defender, turn) {
   const seed = hashString(`${state.match.id}:${attacker.slot}:${turn}`);
   const combatRng = createSeededCombatRng(seed);
@@ -1883,7 +1999,8 @@ function computeAction(attacker, defender, turn) {
   const legacyRoll = Math.floor((actionRoll1000 * 100) / 1000);
   const intensity = 10 + turn * 2.75;
   const baseBackfireThreshold = 180;
-  const backfireThreshold = applyProgressionBonusOutOf1000(baseBackfireThreshold, 0);
+  const attackerBonuses = getFighterCombatBonuses(attacker);
+  const backfireThreshold = applyProgressionBonusOutOf1000(baseBackfireThreshold, -attackerBonuses.backfireReduction);
   // Combat audit / progression-readiness table:
   // - action roll: seed % 100 -> floor(actionRoll1000 * 100 / 1000) using a seeded 0..999 roll.
   // - backfire threshold: 18/100 -> 180/1000, now ready for integer progression bonuses in threshold space.
@@ -2375,6 +2492,17 @@ async function finishMatch() {
     });
     playResultSfx('victory');
     playResultSfx('defeat');
+    if (winner.id === state.me?.id) {
+      updateGoblinProgression((current) => {
+        const nextWins = Math.max(0, Math.floor(Number(current.wins) || 0)) + 1;
+        const milestoneReward = awardCreatureBonusAtThreeWinMilestone(nextWins, current.permanentCombatBonuses);
+        return {
+          wins: nextWins,
+          level: Math.max(1, Math.floor(nextWins / 3) + 1),
+          permanentCombatBonuses: milestoneReward.bonuses,
+        };
+      });
+    }
     await updateLeaderboardForResult(winner, loser, false);
   }
   state.screen = 'postmatch';
@@ -2404,8 +2532,9 @@ function renderStatusCard(title, body, { showHomeButton = true } = {}) {
 }
 
 function renderHome() {
-  const candidate = ensureCurrentCandidateCreature();
+  const candidate = getFeaturedFighterCandidate();
   const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
+  const isSavedGoblin = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
   const isChallengerView = state.homeView === 'challenger' && state.pendingMatch?.payload?.playerA?.id === state.me.id;
   const liveItems = [
     { label: 'Live arenas', value: state.pendingMatch?.opponentJoined ? '01' : '03', meta: state.pendingMatch?.opponentJoined ? 'A lobby is about to pop off.' : 'Goblins are hunting for challengers.' },
@@ -2479,18 +2608,21 @@ function renderHome() {
               <span class="section-kicker">Featured fighter</span>
               <h3 id="featured-fighter-name">${candidate.name}</h3>
             </div>
+            <div id="featured-fighter-label-row" class="featured-fighter-label-row">
+              ${isSavedGoblin ? '<span class="featured-fighter-tag">Your goblin · Saved locally</span>' : '<span class="featured-fighter-tag is-preview">Preview candidate</span>'}
+            </div>
             <div class="fighter-showcase idle-float">
               <div id="featured-preview" class="goblin-frame home-preview-render" aria-live="polite">
                 <canvas class="sprite-canvas" aria-hidden="true"></canvas>
                 <div class="sprite-fallback" hidden></div>
               </div>
             </div>
-            <p id="featured-fighter-copy" class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
+            <p id="featured-fighter-copy" class="subtext">${isSavedGoblin ? `Current fighter · ${candidate.wins || 0} wins · Level ${candidate.level || 1}` : 'Small, loud, unpredictable. Built for ridiculous live duels.'}</p>
             ${isChallengerView ? `<div id="featured-fighter-supporting" class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : '<div id="featured-fighter-supporting" class="subtext" hidden></div>'}
           </div>
           <div class="featured-fighter-actions">
             <button id="featured-skip" class="ghost btn-ghost btn-bounce" type="button">Skip</button>
-            <button id="featured-choose" class="btn-primary btn-bounce" type="button" ${isSelected ? 'disabled' : ''}>${isSelected ? 'Chosen' : 'Choose'}</button>
+            <button id="featured-choose" class="btn-primary btn-bounce" type="button" ${isSelected ? 'disabled' : ''}>${isSelected ? 'Current fighter' : 'Choose'}</button>
           </div>
         </aside>
       </section>
@@ -2536,7 +2668,7 @@ function renderHome() {
       </section>
     </section>`;
 }
-function syncFeaturedPreview(candidate = ensureCurrentCandidateCreature()) {
+function syncFeaturedPreview(candidate = getFeaturedFighterCandidate()) {
   const container = document.getElementById('featured-preview');
   if (!container) return;
   const animator = state.featuredPreviewAnimator;
@@ -2555,14 +2687,25 @@ function syncFeaturedPreview(candidate = ensureCurrentCandidateCreature()) {
     timingMultiplier: candidate.animation.timingMultiplier,
   });
 }
-function updateFeaturedFighter(candidate = ensureCurrentCandidateCreature()) {
+function updateFeaturedFighter(candidate = getFeaturedFighterCandidate()) {
   const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
+  const isSavedGoblin = isSelected;
   const nameNode = document.getElementById('featured-fighter-name');
+  const labelNode = document.getElementById('featured-fighter-label-row');
   const copyNode = document.getElementById('featured-fighter-copy');
   const supportingNode = document.getElementById('featured-fighter-supporting');
   const chooseButton = document.getElementById('featured-choose');
   if (nameNode) nameNode.textContent = candidate.name;
-  if (copyNode) copyNode.textContent = 'Small, loud, unpredictable. Built for ridiculous live duels.';
+  if (labelNode) {
+    labelNode.innerHTML = isSavedGoblin
+      ? '<span class="featured-fighter-tag">Your goblin · Saved locally</span>'
+      : '<span class="featured-fighter-tag is-preview">Preview candidate</span>';
+  }
+  if (copyNode) {
+    copyNode.textContent = isSavedGoblin
+      ? `Current fighter · ${candidate.wins || 0} wins · Level ${candidate.level || 1}`
+      : 'Choose to save this goblin locally, or skip to preview another candidate.';
+  }
   if (supportingNode) {
     if (state.pendingMatch && state.homeView === 'challenger') {
       supportingNode.hidden = false;
@@ -2574,14 +2717,15 @@ function updateFeaturedFighter(candidate = ensureCurrentCandidateCreature()) {
   }
   if (chooseButton) {
     chooseButton.disabled = isSelected;
-    chooseButton.textContent = isSelected ? 'Chosen' : 'Choose';
+    chooseButton.textContent = isSelected ? 'Current fighter' : 'Choose';
   }
   syncFeaturedPreview(candidate);
 }
 function chooseCurrentFeaturedFighter() {
-  const candidate = ensureCurrentCandidateCreature();
-  state.selectedCreature = { ...candidate };
-  updateFeaturedFighter(candidate);
+  const candidate = getFeaturedFighterCandidate();
+  replaceSavedGoblin(candidate);
+  state.currentCandidateCreature = null;
+  updateFeaturedFighter(state.selectedCreature);
 }
 function skipFeaturedFighter() {
   if (state.featuredFighterTransitioning) return;
@@ -2620,7 +2764,7 @@ function bindHomeFeaturedFighterControls() {
   window.clearTimeout(state.featuredFighterTransitionTimer);
   document.getElementById('featured-skip')?.addEventListener('click', skipFeaturedFighter);
   document.getElementById('featured-choose')?.addEventListener('click', chooseCurrentFeaturedFighter);
-  updateFeaturedFighter();
+  updateFeaturedFighter(getFeaturedFighterCandidate());
 }
 
 function renderCreate() {
