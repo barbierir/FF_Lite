@@ -1,10 +1,10 @@
 :root {
-  --bg: #7cfc00;
-  --bg-deep: #7cfc00;
-  --bg-elevated: #ffffff;
-  --panel: #ffffff;
-  --panel-light: #ffffff;
-  --panel-strong: #ffffff;
+  --bg: #4caf50;
+  --bg-deep: #3f8f44;
+  --bg-elevated: #f5f5f5;
+  --panel: #f5f5f5;
+  --panel-light: #fbfbf8;
+  --panel-strong: #efefe9;
   --text: #234230;
   --text-soft: #355947;
   --muted: rgba(35, 66, 48, 0.72);
@@ -39,7 +39,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  background-color: #7CFC00;
+  background-color: var(--bg);
   overflow-x: hidden;
 }
 body::before {
@@ -207,10 +207,10 @@ button:disabled { opacity: 0.6; cursor: default; }
 .fighter-header,
 .status-card,
 .flow-chip {
-  background: #ffffff;
-  border: 4px solid #000000;
-  border-radius: 0;
-  box-shadow: none;
+  background: var(--panel);
+  border: 3px solid #1a1a1a;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
 }
 
 .card::before,
@@ -1833,10 +1833,10 @@ button:disabled { opacity: 0.6; cursor: default; }
 .status-card,
 .flow-chip,
 .featured-fighter {
-  background: #ffffff !important;
-  border: 4px solid #000000 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
+  background: var(--panel) !important;
+  border: 3px solid #1a1a1a !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
 }
 
 .card::before,
