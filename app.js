@@ -264,6 +264,7 @@ const COMBAT_EFFECT_DURATIONS = {
   defeat: 520,
   result: 420,
 };
+const FEATURED_FIGHTER_TRANSITION_MS = 160;
 
 const state = {
   screen: 'home',
@@ -286,6 +287,9 @@ const state = {
   errorMessage: '',
   copyFeedback: '',
   reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false,
+  featuredFighterTransitionTimer: null,
+  featuredFighterTransitionToken: 0,
+  featuredFighterTransitioning: false,
 };
 
 function normalizeAnimationAction(action) {
@@ -2322,18 +2326,20 @@ function renderHome() {
           ${challengePanel}
         </div>
         <aside class="featured-fighter world-card card-lift" id="featured-fighter">
-          <div class="section-heading compact">
-            <span class="section-kicker">Featured fighter</span>
-            <h3 id="featured-fighter-name">${candidate.name}</h3>
-          </div>
-          <div class="fighter-showcase idle-float">
-            <div id="featured-preview" class="goblin-frame home-preview-render" aria-live="polite">
-              <canvas class="sprite-canvas" aria-hidden="true"></canvas>
-              <div class="sprite-fallback" hidden></div>
+          <div id="featured-fighter-content" class="featured-fighter-content">
+            <div class="section-heading compact">
+              <span class="section-kicker">Featured fighter</span>
+              <h3 id="featured-fighter-name">${candidate.name}</h3>
             </div>
+            <div class="fighter-showcase idle-float">
+              <div id="featured-preview" class="goblin-frame home-preview-render" aria-live="polite">
+                <canvas class="sprite-canvas" aria-hidden="true"></canvas>
+                <div class="sprite-fallback" hidden></div>
+              </div>
+            </div>
+            <p id="featured-fighter-copy" class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
+            ${isChallengerView ? `<div id="featured-fighter-supporting" class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : '<div id="featured-fighter-supporting" class="subtext" hidden></div>'}
           </div>
-          <p id="featured-fighter-copy" class="subtext">Small, loud, unpredictable. Built for ridiculous live duels.</p>
-          ${isChallengerView ? `<div class="subtext">Match ID: ${state.pendingMatch.payload.id}</div>` : ''}
           <div class="featured-fighter-actions">
             <button id="featured-skip" class="ghost btn-ghost btn-bounce" type="button">Skip</button>
             <button id="featured-choose" class="btn-primary btn-bounce" type="button" ${isSelected ? 'disabled' : ''}>${isSelected ? 'Chosen' : 'Choose'}</button>
@@ -2405,9 +2411,19 @@ function updateFeaturedFighter(candidate = ensureCurrentCandidateCreature()) {
   const isSelected = Boolean(state.selectedCreature && state.selectedCreature.id === candidate.id);
   const nameNode = document.getElementById('featured-fighter-name');
   const copyNode = document.getElementById('featured-fighter-copy');
+  const supportingNode = document.getElementById('featured-fighter-supporting');
   const chooseButton = document.getElementById('featured-choose');
   if (nameNode) nameNode.textContent = candidate.name;
   if (copyNode) copyNode.textContent = 'Small, loud, unpredictable. Built for ridiculous live duels.';
+  if (supportingNode) {
+    if (state.pendingMatch && state.homeView === 'challenger') {
+      supportingNode.hidden = false;
+      supportingNode.textContent = `Match ID: ${state.pendingMatch.payload.id}`;
+    } else {
+      supportingNode.hidden = true;
+      supportingNode.textContent = '';
+    }
+  }
   if (chooseButton) {
     chooseButton.disabled = isSelected;
     chooseButton.textContent = isSelected ? 'Chosen' : 'Choose';
@@ -2420,10 +2436,40 @@ function chooseCurrentFeaturedFighter() {
   updateFeaturedFighter(candidate);
 }
 function skipFeaturedFighter() {
+  if (state.featuredFighterTransitioning) return;
   const nextCandidate = ensureCurrentCandidateCreature(true);
-  updateFeaturedFighter(nextCandidate);
+  const contentNode = document.getElementById('featured-fighter-content');
+  const skipButton = document.getElementById('featured-skip');
+  const transitionToken = state.featuredFighterTransitionToken + 1;
+  state.featuredFighterTransitionToken = transitionToken;
+  window.clearTimeout(state.featuredFighterTransitionTimer);
+  if (skipButton) skipButton.disabled = true;
+  if (!contentNode || state.reducedMotion) {
+    updateFeaturedFighter(nextCandidate);
+    if (skipButton) skipButton.disabled = false;
+    state.featuredFighterTransitioning = false;
+    return;
+  }
+  state.featuredFighterTransitioning = true;
+  contentNode.classList.remove('is-transitioning-in');
+  void contentNode.offsetWidth;
+  contentNode.classList.add('is-transitioning-out');
+  state.featuredFighterTransitionTimer = window.setTimeout(() => {
+    if (state.featuredFighterTransitionToken !== transitionToken) return;
+    updateFeaturedFighter(nextCandidate);
+    contentNode.classList.remove('is-transitioning-out');
+    contentNode.classList.add('is-transitioning-in');
+    state.featuredFighterTransitionTimer = window.setTimeout(() => {
+      if (state.featuredFighterTransitionToken !== transitionToken) return;
+      contentNode.classList.remove('is-transitioning-in');
+      state.featuredFighterTransitioning = false;
+      if (skipButton) skipButton.disabled = false;
+    }, FEATURED_FIGHTER_TRANSITION_MS);
+  }, FEATURED_FIGHTER_TRANSITION_MS);
 }
 function bindHomeFeaturedFighterControls() {
+  state.featuredFighterTransitioning = false;
+  window.clearTimeout(state.featuredFighterTransitionTimer);
   document.getElementById('featured-skip')?.addEventListener('click', skipFeaturedFighter);
   document.getElementById('featured-choose')?.addEventListener('click', chooseCurrentFeaturedFighter);
   updateFeaturedFighter();
@@ -2655,6 +2701,9 @@ function renderLeaderboard() {
 }
 function render() {
   if (state.screen === 'home') audioManager.initializeForHome();
+  window.clearTimeout(state.featuredFighterTransitionTimer);
+  state.featuredFighterTransitionTimer = null;
+  state.featuredFighterTransitioning = false;
   state.previewAnimators.forEach((animator) => animator.destroy?.());
   state.previewAnimators = [];
   state.featuredPreviewAnimator?.destroy?.();
