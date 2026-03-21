@@ -862,6 +862,30 @@ function loadLocalPlayer() {
   saveLocalPlayer(player);
   return player;
 }
+
+function setLocalPlayerVariant(variantIndex) {
+  const normalizedVariantIndex = normalizeVariantIndex(variantIndex);
+  if (normalizedVariantIndex == null || state.me.variantIndex === normalizedVariantIndex) return;
+  state.me = {
+    ...state.me,
+    variantIndex: normalizedVariantIndex,
+    variant: PALETTE_VARIANTS[normalizedVariantIndex],
+  };
+  saveLocalPlayer(state.me);
+  if (state.pendingMatch?.payload?.playerA?.id === state.me.id) {
+    state.pendingMatch = {
+      ...state.pendingMatch,
+      payload: {
+        ...state.pendingMatch.payload,
+        playerA: {
+          ...state.pendingMatch.payload.playerA,
+          variantIndex: normalizedVariantIndex,
+        },
+      },
+    };
+  }
+  render();
+}
 function getCurrentLeaderboardDayBucket() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: LEADERBOARD_DAY_TIMEZONE }).format(new Date());
 }
@@ -2188,6 +2212,29 @@ function renderHome() {
   const copyFeedbackMarkup = state.copyFeedback
     ? `<div class="copy-feedback" aria-live="polite">${state.copyFeedback}</div>`
     : '<div class="copy-feedback sr-only" aria-live="polite"></div>';
+  const creatureSelector = `
+    <section class="panel world-card creature-selector card-lift" aria-labelledby="home-creature-title">
+      <div class="section-heading compact">
+        <span class="section-kicker">Creature bay</span>
+        <h2 class="section-title" id="home-creature-title">Choose your creature</h2>
+      </div>
+      <div class="selector-copy">
+        <p class="muted">Pick the goblin palette you want to use before creating a new challenge.</p>
+      </div>
+      <div class="creature-selector-list" role="list" aria-label="Creature variants">
+        ${PALETTE_VARIANTS.map((variant, index) => `
+          <button
+            type="button"
+            class="creature-option btn-bounce ${state.me.variantIndex === index ? 'is-active' : ''}"
+            data-creature-variant="${index}"
+            aria-pressed="${state.me.variantIndex === index ? 'true' : 'false'}"
+          >
+            <span class="creature-option-preview">${renderAnimatedPreview(`selector-${index}`, index)}</span>
+            <span class="creature-option-label">Goblin ${index + 1}</span>
+          </button>`).join('')}
+      </div>
+    </section>`;
+
   const challengePanel = isChallengerView ? `
     <div class="world-card challenge-card challenge-card-active card-lift">
       <div class="section-heading compact">
@@ -2260,6 +2307,8 @@ function renderHome() {
       </section>
 
       <section class="home-subgrid">
+        ${creatureSelector}
+
         <section class="panel world-card live-activity">
           <div class="section-heading compact">
             <span class="section-kicker">World activity</span>
@@ -2529,6 +2578,10 @@ function render() {
   state.previewAnimators.forEach((animator) => animator.stop());
   state.previewAnimators = [];
   const app = document.getElementById('app');
+  if (!app) {
+    console.warn('Missing element: app');
+    return;
+  }
   app.innerHTML = `
     <main class="app-shell">
       <nav class="topbar world-card">
@@ -2578,6 +2631,11 @@ function render() {
     refreshAudioControlsUI();
   });
   document.getElementById('home-create')?.addEventListener('click', startCreateFlow);
+  document.querySelectorAll('[data-creature-variant]').forEach((button) => {
+    button.addEventListener('click', () => {
+      setLocalPlayerVariant(Number(button.dataset.creatureVariant));
+    });
+  });
   document.getElementById('nav-leaderboard')?.addEventListener('click', showLeaderboardScreen);
   document.getElementById('copy-link')?.addEventListener('click', async () => {
     const copyButton = document.getElementById('copy-link');
@@ -2634,15 +2692,23 @@ function render() {
   refreshAudioControlsUI();
 }
 
-bindReducedMotionPreference();
-audioManager.initializeForHome();
+function bootApp() {
+  audioManager.initializeForHome();
+  const joinMatchId = parseJoinMatchId();
+  if (joinMatchId) {
+    state.screen = 'boot';
+    state.booting = true;
+    render();
+    startJoinedFlow(joinMatchId);
+    return;
+  }
+  render();
+}
 
-const joinMatchId = parseJoinMatchId();
-if (joinMatchId) {
-  state.screen = 'boot';
-  state.booting = true;
-  render();
-  startJoinedFlow(joinMatchId);
+bindReducedMotionPreference();
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootApp, { once: true });
 } else {
-  render();
+  bootApp();
 }
