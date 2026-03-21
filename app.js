@@ -962,7 +962,18 @@ function getStoredLocalGoblinProfile() {
     return null;
   }
 }
-function saveGoblinProfile(player = state.me) {
+function queueLeaderboardIdentitySync(player = state.me, reason = 'profile-confirmed') {
+  const goblin = sanitizeStoredGoblinProfile(player) || buildPlayerProfile(player || {});
+  Promise.resolve().then(() => syncLeaderboardIdentity(goblin, { reason })).catch((error) => {
+    console.warn('[leaderboard] identity sync failed', {
+      playerId: goblin?.id || null,
+      reason,
+      error: error?.message || error,
+    });
+  });
+  return goblin;
+}
+function saveGoblinProfile(player = state.me, { syncLeaderboard = true, reason = 'profile-saved' } = {}) {
   const goblin = buildPlayerProfile(player || {});
   const payload = {
     version: LOCAL_PROFILE_SCHEMA_VERSION,
@@ -978,7 +989,9 @@ function saveGoblinProfile(player = state.me) {
     },
   };
   safeLocalStorageSetItem(STORAGE_KEYS.localProfile, JSON.stringify(payload));
-  return buildPlayerProfile(payload.savedGoblin);
+  const savedGoblin = buildPlayerProfile(payload.savedGoblin);
+  if (syncLeaderboard) queueLeaderboardIdentitySync(savedGoblin, reason);
+  return savedGoblin;
 }
 function loadSavedGoblin() {
   clearLegacyGoblinCache();
@@ -1104,6 +1117,52 @@ async function upsertLeaderboardRecord(path, payload) {
     });
   }
 }
+
+async function syncLeaderboardIdentity(player = state.me, { reason = 'profile-confirmed' } = {}) {
+  const goblin = sanitizeStoredGoblinProfile(player) || buildPlayerProfile(player || {});
+  if (!goblin?.id || !isBackendConfigured()) return false;
+  const identityPayload = {
+    player_id: goblin.id,
+    display_name: goblin.name,
+    variant_index: goblin.variantIndex,
+  };
+  console.info('[leaderboard] identity sync start', {
+    playerId: goblin.id,
+    displayName: goblin.name,
+    variantIndex: goblin.variantIndex,
+    reason,
+  });
+  let synced = false;
+  try {
+    await upsertLeaderboardRecord('ff_lite_player_ratings?on_conflict=player_id', identityPayload);
+    synced = true;
+  } catch (error) {
+    console.warn('[leaderboard] rating identity upsert failed', {
+      playerId: goblin.id,
+      reason,
+      error: error?.message || error,
+    });
+  }
+  try {
+    await supabaseRequest(`ff_lite_daily_stats?player_id=eq.${encodeURIComponent(goblin.id)}&day_bucket=eq.${getCurrentLeaderboardDayBucket()}`, {
+      method: 'PATCH',
+      body: {
+        display_name: goblin.name,
+        variant_index: goblin.variantIndex,
+      },
+      prefer: 'return=representation',
+    });
+    synced = true;
+  } catch (error) {
+    console.warn('[leaderboard] daily identity patch skipped', {
+      playerId: goblin.id,
+      reason,
+      error: error?.message || error,
+    });
+  }
+  return synced;
+}
+
 async function loadDailyLeaderboard({ silent = false } = {}) {
   const dayBucket = getCurrentLeaderboardDayBucket();
   console.info('[leaderboard] daily load start', { playerId: state.me?.id || null, dayBucket, silent });
@@ -1176,16 +1235,36 @@ function buildMatchResultRpcPayload(match, winner, draw = false) {
   if (!match?.id || !playerA?.id || !playerB?.id) {
     throw new Error('Missing match or fighter identifiers for result application.');
   }
+  const resultType = draw
+    ? 'draw'
+    : winner?.id === playerA.id
+      ? 'player_a_win'
+      : winner?.id === playerB.id
+        ? 'player_b_win'
+        : null;
+  if (!resultType) {
+    throw new Error('Missing canonical winner for result application.');
+  }
   return {
     p_match_id: match.id,
-    p_player_a: playerA.id,
-    p_player_b: playerB.id,
-    p_winner: draw ? null : (winner?.id || null),
+    p_player_a_id: playerA.id,
+    p_player_a_name: playerA.name,
+    p_player_a_variant_index: playerA.variantIndex,
+    p_player_b_id: playerB.id,
+    p_player_b_name: playerB.name,
+    p_player_b_variant_index: playerB.variantIndex,
+    p_winner_id: draw ? null : (winner?.id || null),
+    p_result_type: resultType,
+    p_finished_at: new Date().toISOString(),
+    p_metadata: {
+      source: 'ff-lite-client',
+      revision: match?.revision || null,
+    },
   };
 }
 function didApplyMatchResultSucceed(result) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
-  if (result.success !== true) return false;
+  if ('success' in result && result.success !== true) return false;
   return result.applied === true || result.already_processed === true;
 }
 async function applyMatchResultViaBackend(match, winner, draw = false) {
@@ -1195,7 +1274,18 @@ async function applyMatchResultViaBackend(match, winner, draw = false) {
     currentPlayerId: state.me?.id || null,
     payload,
   });
-  const response = await supabaseRpc('apply_match_result', payload);
+  let response;
+  try {
+    response = await supabaseRpc('apply_ff_lite_match_result', payload);
+  } catch (error) {
+    if (!String(error?.message || '').includes('apply_ff_lite_match_result')) throw error;
+    response = await supabaseRpc('apply_match_result', {
+      p_match_id: payload.p_match_id,
+      p_player_a: payload.p_player_a_id,
+      p_player_b: payload.p_player_b_id,
+      p_winner: payload.p_winner_id,
+    });
+  }
   console.info('[leaderboard] apply result rpc success', {
     currentPlayerId: state.me?.id || null,
     matchId: match?.id || null,
@@ -1565,10 +1655,34 @@ function normalizeMatchFighter(rawFighter, { fallbackSlot = 'A', fallbackHp = 10
 function getMatchFighterBySlot(match, slot) {
   return match?.fighters?.find((fighter) => fighter.slot === slot) || null;
 }
+function resolveCanonicalFighter(snapshot, { fighterId = null, fighterSlot = null } = {}) {
+  if (!snapshot?.fighters?.length) return null;
+  if (fighterSlot) {
+    const fighterBySlot = getMatchFighterBySlot(snapshot, fighterSlot);
+    if (fighterBySlot) return fighterBySlot;
+  }
+  if (fighterId) {
+    const fighterById = snapshot.fighters.find((fighter) => fighter.id === fighterId) || null;
+    if (fighterById) return fighterById;
+  }
+  return null;
+}
 function getCanonicalMatchResult(snapshot) {
   if (!snapshot?.finished) return { winner: null, loser: null };
-  const winner = snapshot.winnerId ? getMatchFighterBySlot(snapshot, snapshot.winnerSlot || snapshot.fighters?.find((fighter) => fighter.id === snapshot.winnerId)?.slot) || snapshot.fighters?.find((fighter) => fighter.id === snapshot.winnerId) || null : null;
-  const loser = snapshot.loserId ? getMatchFighterBySlot(snapshot, snapshot.loserSlot || snapshot.fighters?.find((fighter) => fighter.id === snapshot.loserId)?.slot) || snapshot.fighters?.find((fighter) => fighter.id === snapshot.loserId) || null : null;
+  const winner = resolveCanonicalFighter(snapshot, {
+    fighterId: snapshot.winnerId || null,
+    fighterSlot: snapshot.winnerSlot || null,
+  });
+  let loser = resolveCanonicalFighter(snapshot, {
+    fighterId: snapshot.loserId || null,
+    fighterSlot: snapshot.loserSlot || null,
+  });
+  if (!loser && winner && snapshot.fighters.length === 2) {
+    loser = snapshot.fighters.find((fighter) => fighter.slot !== winner.slot || fighter.id !== winner.id) || null;
+  }
+  if (!loser && snapshot.loserId && snapshot.fighters.length === 2) {
+    loser = snapshot.fighters.find((fighter) => fighter.id !== snapshot.winnerId) || null;
+  }
   return { winner, loser };
 }
 function getCanonicalWinner(match = state.match) {
@@ -1753,6 +1867,7 @@ async function startCreateFlow() {
   try {
     const activeCreature = state.selectedCreature || getFeaturedFighterCandidate();
     const playerForMatch = { ...state.me, name: activeCreature.name, creatureId: activeCreature.creatureId, variantIndex: activeCreature.variantIndex, variant: activeCreature.variant };
+    queueLeaderboardIdentitySync(playerForMatch, 'match-create');
     const payload = makeMatchPayload(playerForMatch);
     const sharedMatch = await createSharedMatch(payload);
     setPendingMatchState({
@@ -1787,6 +1902,7 @@ async function startJoinedFlow(matchId) {
     logSharedLink('fetch-result', { matchId, found: Boolean(hostMatch), status: hostMatch?.status || null, hasPlayerA: Boolean(hostMatch?.playerA), hasPlayerB: Boolean(hostMatch?.playerB) });
     if (!hostMatch?.playerA) throw new Error('The shared match is incomplete and cannot start.');
     const playerB = withResolvedVariant(state.me, hostMatch.playerA.variantIndex, { preserveExisting: true });
+    queueLeaderboardIdentitySync(playerB, 'match-join');
     logSharedLink('join-attempt-started', { matchId, playerBId: playerB.id, playerBName: playerB.name });
     const sharedMatch = await joinSharedMatch(matchId, { id: playerB.id, name: playerB.name, creatureId: playerB.creatureId, variantIndex: playerB.variantIndex });
     logSharedLink('join-attempt-result', { matchId, status: sharedMatch?.status || null, hasPlayerA: Boolean(sharedMatch?.playerA), hasPlayerB: Boolean(sharedMatch?.playerB) });
@@ -1868,13 +1984,18 @@ function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
   const lastAction = sharedState.lastAction || previousMatch?.lastAction || null;
   const finished = payload.status === 'finished' || Boolean(sharedState.finishedAt);
   const winnerId = sharedState.winnerId || sharedState.winner?.id || previousMatch?.winnerId || null;
+  const winnerSlot = sharedState.winner?.slot || previousMatch?.winnerSlot || null;
   const loserId = sharedState.loserId || previousMatch?.loserId || null;
+  const loserSlot = previousMatch?.loserSlot || null;
   const fighters = MATCH_SLOT_ORDER.map((slot) => {
     const sharedFighter = normalizeMatchFighter(sharedBySlot.get(slot), { fallbackSlot: slot, fallbackHp: 100 });
     const baseFighter = baseBySlot[slot] || {};
     const previousFighter = previousBySlot.get(slot) || null;
+    const resolvedFighterId = sharedFighter.id || baseFighter.id || previousFighter?.id || null;
+    const isWinner = finished && ((winnerId && resolvedFighterId === winnerId) || (winnerSlot && slot === winnerSlot));
+    const isLoser = finished && ((loserId && resolvedFighterId === loserId) || (winnerSlot && slot !== winnerSlot));
     const stateName = finished
-      ? (winnerId && sharedFighter.id === winnerId ? 'victory' : loserId && sharedFighter.id === loserId ? 'defeat' : sharedFighter.state || previousFighter?.state || 'idle')
+      ? (isWinner ? 'victory' : isLoser ? 'defeat' : sharedFighter.state || previousFighter?.state || 'idle')
       : (sharedFighter.state || previousFighter?.state || 'idle');
     return {
       ...previousFighter,
@@ -1887,8 +2008,9 @@ function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
       animationState: previousFighter?.animationState || createAnimationState(stateName),
     };
   });
-  const winnerSlot = fighters.find((fighter) => fighter.id === winnerId)?.slot || null;
-  const loserSlot = fighters.find((fighter) => fighter.id === loserId)?.slot || null;
+  const resolvedWinnerSlot = fighters.find((fighter) => fighter.id === winnerId)?.slot || winnerSlot || null;
+  const resolvedLoserSlot = fighters.find((fighter) => fighter.id === loserId)?.slot || (resolvedWinnerSlot && fighters.find((fighter) => fighter.slot !== resolvedWinnerSlot)?.slot) || loserSlot || null;
+  const resolvedLoserId = fighters.find((fighter) => fighter.slot === resolvedLoserSlot)?.id || loserId || null;
   return {
     id: payload.id,
     revision,
@@ -1897,9 +2019,9 @@ function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
     fighters,
     finished,
     winnerId,
-    loserId,
-    winnerSlot,
-    loserSlot,
+    loserId: resolvedLoserId,
+    winnerSlot: resolvedWinnerSlot,
+    loserSlot: resolvedLoserSlot,
     logs,
     lastAction,
     sharedState,
