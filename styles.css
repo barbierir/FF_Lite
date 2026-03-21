@@ -967,9 +967,17 @@ button:disabled { opacity: 0.6; cursor: default; }
   justify-content: flex-start;
 }
 
-.match-layout { gap: 16px; }
+.match-layout { gap: 18px; }
 .match-head,
-.battle-log-wrap { display: grid; gap: 12px; }
+.battle-log-wrap,
+.match-arena,
+.match-log { display: grid; gap: 12px; min-width: 0; }
+.match-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2.35fr) minmax(260px, 1fr);
+  gap: clamp(16px, 2vw, 24px);
+  align-items: stretch;
+}
 .match-meta {
   display: flex;
   align-items: center;
@@ -980,16 +988,18 @@ button:disabled { opacity: 0.6; cursor: default; }
 .arena-shell {
   position: relative;
   isolation: isolate;
+  width: 100%;
+  max-width: 1020px;
 }
 .arena {
   position: relative;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(10px, 2vw, 18px);
+  gap: clamp(10px, 1.8vw, 16px);
   align-items: end;
-  min-height: clamp(380px, 56vw, 520px);
-  padding: clamp(20px, 3vw, 28px);
-  border-radius: 30px;
+  min-height: clamp(340px, 48vw, 470px);
+  padding: clamp(16px, 2.4vw, 24px);
+  border-radius: 28px;
 }
 .arena-background {
   position: absolute;
@@ -1007,9 +1017,9 @@ button:disabled { opacity: 0.6; cursor: default; }
 .arena-floor {
   position: absolute;
   left: 50%;
-  bottom: 12%;
-  width: min(82%, 680px);
-  height: 78px;
+  bottom: 11%;
+  width: min(78%, 600px);
+  height: 70px;
   transform: translateX(-50%);
   border-radius: 999px;
   background: radial-gradient(circle, rgba(244, 201, 79, 0.32), rgba(127, 215, 216, 0.16) 45%, transparent 72%);
@@ -1022,15 +1032,15 @@ button:disabled { opacity: 0.6; cursor: default; }
   z-index: 2;
   align-self: end;
   width: 100%;
-  gap: 12px;
+  gap: 10px;
 }
 .fighter-left { justify-items: end; transform: translateX(clamp(0px, 2vw, 14px)); }
 .fighter-right { justify-items: start; transform: translateX(clamp(0px, -2vw, -14px)); }
 .fighter-header {
   position: relative;
-  width: min(100%, 270px);
-  min-height: 102px;
-  padding: 14px 16px;
+  width: min(100%, 250px);
+  min-height: 96px;
+  padding: 12px 14px;
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(255,255,249,0.97), rgba(231, 244, 223, 0.94));
   border: 1px solid rgba(76, 110, 81, 0.14);
@@ -1056,8 +1066,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 .align-right .nameplate,
 .align-right .subtext { text-align: right; }
 .health-bar {
-  width: min(100%, 255px);
-  height: 16px;
+  width: min(100%, 240px);
+  height: 14px;
   background: rgba(95, 132, 88, 0.18);
   border-radius: 999px;
   overflow: hidden;
@@ -1072,7 +1082,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   transition: width 220ms ease, filter 180ms ease-out, opacity 180ms ease-out;
 }
 .fighter-slot {
-  width: min(100%, clamp(220px, 28vw, 340px));
+  width: min(100%, clamp(200px, 24vw, 300px));
 }
 .fighter-transform-positioner {
   position: relative;
@@ -1122,9 +1132,12 @@ button:disabled { opacity: 0.6; cursor: default; }
 .sprite-fallback:not([hidden]) { display: grid; }
 .log-panel {
   min-height: 0;
+  height: 100%;
   border-radius: var(--radius-card);
-  padding: 20px;
+  padding: 18px;
   background: var(--surface-soft);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 .log-head-row {
   display: flex;
@@ -1152,9 +1165,10 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 #log-lines {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   align-content: start;
-  max-height: 24rem;
+  min-height: 0;
+  height: 100%;
   overflow-y: auto;
   padding-right: 4px;
   scroll-behavior: smooth;
@@ -1173,10 +1187,10 @@ button:disabled { opacity: 0.6; cursor: default; }
   gap: 12px;
   align-items: center;
   margin: 0;
-  min-height: 60px;
-  line-height: 1.65;
+  min-height: 54px;
+  line-height: 1.5;
   color: var(--text-main);
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-radius: 18px;
   background: #EEF3E4;
   border: 1.5px solid rgba(33, 65, 42, 0.12);
@@ -1806,6 +1820,15 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 @media (max-width: 900px) {
+  .match-body {
+    grid-template-columns: 1fr;
+  }
+  .match-log {
+    min-height: clamp(260px, 45vh, 360px);
+  }
+  .arena-shell {
+    max-width: none;
+  }
   .topbar,
   .match-meta {
     align-items: flex-start;

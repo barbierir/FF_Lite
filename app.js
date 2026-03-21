@@ -2600,45 +2600,49 @@ function renderMatchOrPost() {
         </div>
         ${isPost ? `<div class="result-banner"><strong>${result}</strong>${state.match.winner ? '' : 'Both fighters survive the final stink burst.'}</div>` : ''}
       </div>
-      <div class="arena-shell">
-        <section class="arena world-card">
-          <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
-          <div class="arena-floor" aria-hidden="true"></div>
-          ${state.match.fighters.map((fighter, index) => `
-            <article class="fighter fighter-${fighter.side}" data-fighter="${index}" data-hp="${fighter.hp}">
-              <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}" data-fighter-header="${index}">
-                <div class="fighter-label-row">
-                  <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
-                  <span class="fighter-state" data-fighter-state="${index}">${fighter.state || 'idle'}</span>
-                </div>
-                <div class="nameplate">${fighter.name}</div>
-                <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · arena ready</div>
-              </div>
-              <div class="fighter-slot">
-                <div class="fighter-transform-positioner">
-                  <div class="sprite-render" data-animator="${index}">
-                    <canvas class="sprite-canvas" aria-hidden="true"></canvas>
-                    <div class="sprite-fallback" hidden></div>
+      <div class="match-body">
+        <div class="match-arena">
+          <div class="arena-shell">
+            <section class="arena world-card">
+              <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
+              <div class="arena-floor" aria-hidden="true"></div>
+              ${state.match.fighters.map((fighter, index) => `
+                <article class="fighter fighter-${fighter.side}" data-fighter="${index}" data-hp="${fighter.hp}">
+                  <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}" data-fighter-header="${index}">
+                    <div class="fighter-label-row">
+                      <span class="fighter-side">${fighter.slot === 'A' ? 'Player A' : 'Player B'}</span>
+                      <span class="fighter-state" data-fighter-state="${index}">${fighter.state || 'idle'}</span>
+                    </div>
+                    <div class="nameplate">${fighter.name}</div>
+                    <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · arena ready</div>
                   </div>
-                </div>
-              </div>
-              <div class="health-bar" data-hp-wrap="${index}"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
-            </article>`).join('')}
-        </section>
-      </div>
-      <div class="battle-log-wrap">
-        <div class="log-panel world-card">
-          <div class="log-head-row">
-            <div class="log-heading-group">
-              <p class="log-heading">Battle log</p>
-              <p class="log-subheading">Fresh arena events stack at the top for quick scanning.</p>
-            </div>
-            <span class="status-chip" data-live="true">Live feed</span>
-          </div>
-          <div id="log-lines" aria-live="polite" aria-atomic="false">
-            ${renderBattleLogEntries()}
+                  <div class="fighter-slot">
+                    <div class="fighter-transform-positioner">
+                      <div class="sprite-render" data-animator="${index}">
+                        <canvas class="sprite-canvas" aria-hidden="true"></canvas>
+                        <div class="sprite-fallback" hidden></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="health-bar" data-hp-wrap="${index}"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
+                </article>`).join('')}
+            </section>
           </div>
         </div>
+        <aside class="match-log battle-log-wrap">
+          <div class="log-panel world-card">
+            <div class="log-head-row">
+              <div class="log-heading-group">
+                <p class="log-heading">Battle log</p>
+                <p class="log-subheading">Fresh arena events stack at the top for quick scanning.</p>
+              </div>
+              <span class="status-chip" data-live="true">Live feed</span>
+            </div>
+            <div id="log-lines" aria-live="polite" aria-atomic="false">
+              ${renderBattleLogEntries()}
+            </div>
+          </div>
+        </aside>
       </div>
     </section>`;
 }
