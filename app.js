@@ -1027,10 +1027,12 @@ function normalizeLeaderboardRow(record, type = 'daily') {
   const draws = Number(record.draws || 0);
   const matchesPlayed = Number(record.matches_played || (wins + losses + draws));
   const rating = Math.round(Number(record.rating || INITIAL_RATING));
+  const variantIndex = normalizeVariantIndex(Number.isInteger(record.variant_index) ? record.variant_index : Number(record.variant_index))
+    ?? getDeterministicVariantIndex(record.player_id || record.display_name || 'goblin', 'goblin');
   return {
     playerId: record.player_id,
     name: record.display_name || 'Goblin',
-    variantIndex: getDeterministicVariantIndex(record.player_id || record.display_name || 'goblin', 'goblin'),
+    variantIndex,
     wins,
     losses,
     draws,
@@ -1057,6 +1059,39 @@ function setLeaderboardRows(type, rows) {
 function shouldRenderLeaderboard(type, silent) {
   return !silent && state.screen === 'leaderboard' && Boolean(type);
 }
+async function loadLeaderboardRecords(primaryPath, legacyPath) {
+  try {
+    return await supabaseRequest(primaryPath, { method: 'GET', prefer: undefined });
+  } catch (error) {
+    if (!String(error?.message || '').includes('variant_index')) throw error;
+    console.warn('[leaderboard] appearance field missing, falling back to legacy query', {
+      path: primaryPath,
+      error: error?.message || error,
+    });
+    return supabaseRequest(legacyPath, { method: 'GET', prefer: undefined });
+  }
+}
+async function upsertLeaderboardRecord(path, payload) {
+  try {
+    return await supabaseRequest(path, {
+      method: 'POST',
+      body: payload,
+      prefer: 'resolution=merge-duplicates,return=representation',
+    });
+  } catch (error) {
+    if (!String(error?.message || '').includes('variant_index')) throw error;
+    const { variant_index: _ignoredVariantIndex, ...legacyPayload } = payload;
+    console.warn('[leaderboard] appearance field missing, falling back to legacy upsert', {
+      path,
+      error: error?.message || error,
+    });
+    return supabaseRequest(path, {
+      method: 'POST',
+      body: legacyPayload,
+      prefer: 'resolution=merge-duplicates,return=representation',
+    });
+  }
+}
 async function loadDailyLeaderboard({ silent = false } = {}) {
   const dayBucket = getCurrentLeaderboardDayBucket();
   console.info('[leaderboard] daily load start', { playerId: state.me?.id || null, dayBucket, silent });
@@ -1070,7 +1105,10 @@ async function loadDailyLeaderboard({ silent = false } = {}) {
     return [];
   }
   try {
-    const rows = await supabaseRequest(`ff_lite_daily_stats?day_bucket=eq.${dayBucket}&select=player_id,display_name,wins,losses,draws,matches_played&order=wins.desc,draws.desc,losses.asc,display_name.asc`, { method: 'GET', prefer: undefined });
+    const rows = await loadLeaderboardRecords(
+      `ff_lite_daily_stats?day_bucket=eq.${dayBucket}&select=player_id,display_name,variant_index,wins,losses,draws,matches_played&order=wins.desc,draws.desc,losses.asc,display_name.asc`,
+      `ff_lite_daily_stats?day_bucket=eq.${dayBucket}&select=player_id,display_name,wins,losses,draws,matches_played&order=wins.desc,draws.desc,losses.asc,display_name.asc`,
+    );
     const normalized = sortLeaderboardRows((rows || []).map((row) => normalizeLeaderboardRow(row, 'daily')), 'daily');
     setLeaderboardRows('daily', normalized);
     setLeaderboardStatus('daily', 'ready');
@@ -1096,7 +1134,10 @@ async function loadRatingLeaderboard({ silent = false } = {}) {
     return [];
   }
   try {
-    const rows = await supabaseRequest('ff_lite_player_ratings?select=player_id,display_name,rating,wins,losses,draws,matches_played,updated_at&order=rating.desc,wins.desc,losses.asc,display_name.asc', { method: 'GET', prefer: undefined });
+    const rows = await loadLeaderboardRecords(
+      'ff_lite_player_ratings?select=player_id,display_name,variant_index,rating,wins,losses,draws,matches_played,updated_at&order=rating.desc,wins.desc,losses.asc,display_name.asc',
+      'ff_lite_player_ratings?select=player_id,display_name,rating,wins,losses,draws,matches_played,updated_at&order=rating.desc,wins.desc,losses.asc,display_name.asc',
+    );
     const normalized = sortLeaderboardRows((rows || []).map((row) => normalizeLeaderboardRow(row, 'rating')), 'rating');
     setLeaderboardRows('rating', normalized);
     setLeaderboardStatus('rating', 'ready');
@@ -1146,12 +1187,9 @@ async function upsertPlayerRating(player, updates) {
     draws: Number(updates.draws || 0),
     matches_played: Number(updates.matchesPlayed || 0),
     updated_at: new Date().toISOString(),
+    variant_index: normalizeVariantIndex(player.variantIndex) ?? 0,
   };
-  return supabaseRequest('ff_lite_player_ratings?on_conflict=player_id', {
-    method: 'POST',
-    body: payload,
-    prefer: 'resolution=merge-duplicates,return=representation',
-  });
+  return upsertLeaderboardRecord('ff_lite_player_ratings?on_conflict=player_id', payload);
 }
 async function updateGlobalRatingsForResult(playerA, playerB, result) {
   if (!playerA?.id || !playerB?.id) return null;
@@ -1222,6 +1260,7 @@ async function upsertDailyStat(player, increments) {
       losses: Number(current?.losses || 0) + (increments.losses || 0),
       draws: Number(current?.draws || 0) + (increments.draws || 0),
       matches_played: Number(current?.matches_played || 0) + (increments.matchesPlayed || 0),
+      variant_index: normalizeVariantIndex(player.variantIndex) ?? normalizeVariantIndex(current?.variant_index) ?? 0,
     };
     console.info('[leaderboard] upsert write', {
       currentPlayerId: state.me?.id || null,
@@ -1229,11 +1268,7 @@ async function upsertDailyStat(player, increments) {
       dayBucket,
       payload: next,
     });
-    const response = await supabaseRequest('ff_lite_daily_stats?on_conflict=day_bucket,player_id', {
-      method: 'POST',
-      body: next,
-      prefer: 'resolution=merge-duplicates,return=representation',
-    });
+    const response = await upsertLeaderboardRecord('ff_lite_daily_stats?on_conflict=day_bucket,player_id', next);
     console.info('[leaderboard] upsert success', {
       currentPlayerId: state.me?.id || null,
       playerId: player.id,
@@ -2514,9 +2549,9 @@ async function finishMatch() {
   syncSharedMatchResult();
 }
 
-function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex, extraAttributes = '') {
+function renderAnimatedPreview(label = '', variantIndex = state.me?.variantIndex, extraAttributes = '', className = 'goblin-frame home-preview-render') {
   return `
-    <div class="goblin-frame home-preview-render" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}" ${extraAttributes}>
+    <div class="${className}" data-home-animator="${label}" data-variant-index="${variantIndex ?? ''}" ${extraAttributes}>
       <canvas class="sprite-canvas" aria-hidden="true"></canvas>
       <div class="sprite-fallback" hidden></div>
     </div>`;
@@ -2962,9 +2997,8 @@ function setLeaderboardPage(type, page) {
   state.leaderboardPage = { ...state.leaderboardPage, [type]: nextPage };
   render();
 }
-function getGoblinThumbnailStyle(variantIndex) {
-  const variant = PALETTE_VARIANTS[normalizeVariantIndex(variantIndex) ?? 0] || PALETTE_VARIANTS[0];
-  return `--thumb-hue:${variant.hue}deg; --thumb-sat:${variant.sat}; --thumb-bright:${variant.bright};`;
+function renderLeaderboardMiniPreview(row, rank) {
+  return renderAnimatedPreview(`leaderboard-${row.playerId || row.name || rank}`, row.variantIndex, 'aria-hidden="true"', 'goblin-frame leaderboard-mini-preview');
 }
 function renderLeaderboardRows(rows, type, page = 1) {
   const pageOffset = (page - 1) * LEADERBOARD_PAGE_SIZE;
@@ -2980,9 +3014,11 @@ function renderLeaderboardRows(rows, type, page = 1) {
         <div class="leaderboard-rank">#${rank}</div>
         ${badge ? `<div class="leaderboard-badge">${badge}</div>` : ''}
       </div>
-      <div class="leaderboard-thumbnail" aria-hidden="true" style="${getGoblinThumbnailStyle(row.variantIndex)}"></div>
       <div class="leaderboard-main">
-        <div class="leaderboard-name">${row.name}</div>
+        <div class="leaderboard-identity">
+          ${renderLeaderboardMiniPreview(row, rank)}
+          <div class="leaderboard-name">${row.name}</div>
+        </div>
         <div class="leaderboard-stats">
           <span>W ${row.wins}</span><span>L ${row.losses}</span><span>D ${row.draws}</span><span>${row.matchesPlayed} ${row.matchesPlayed === 1 ? 'match' : 'matches'}</span><span>${row.winRate}% WR</span>
         </div>
