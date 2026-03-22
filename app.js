@@ -3430,8 +3430,23 @@ function getSharedHydrationDecision(sharedMatch, currentSnapshot = state.match) 
     return { accept: false, reason: 'missing-shared-state', snapshot: null };
   }
   const incomingSnapshot = buildCanonicalMatchSnapshot(sharedMatch, { previousMatch: currentSnapshot });
-  const accept = isSharedSnapshotNewer(incomingSnapshot, currentSnapshot);
-  const reason = !currentSnapshot ? 'no-local-snapshot' : accept ? 'newer-shared-snapshot' : 'stale-or-duplicate-shared-snapshot';
+  const localRunOwnsPresentation = Boolean(
+    currentSnapshot
+    && !currentSnapshot.finished
+    && state.screen === 'match'
+    && state.match?.id === incomingSnapshot.id
+    && state.match?.id === currentSnapshot.id
+  );
+  const accept = localRunOwnsPresentation
+    ? Boolean(incomingSnapshot.finished && isSharedSnapshotNewer(incomingSnapshot, currentSnapshot))
+    : isSharedSnapshotNewer(incomingSnapshot, currentSnapshot);
+  const reason = !currentSnapshot
+    ? 'no-local-snapshot'
+    : localRunOwnsPresentation && !incomingSnapshot.finished
+      ? 'local-presentation-owner-active'
+      : accept
+        ? 'newer-shared-snapshot'
+        : 'stale-or-duplicate-shared-snapshot';
   const progressComparison = compareMatchProgress(incomingSnapshot, currentSnapshot);
   debugMatchLog('hydration decision', {
     matchId: sharedMatch.id,
