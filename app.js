@@ -352,6 +352,11 @@ function createAnimationState(currentAction = 'idle') {
     currentTimingMultiplier: 1,
     currentAsset: getActionAsset(currentAction, 1),
     lastVariantByAction: {},
+    visualAction: currentAction,
+    lockUntil: 0,
+    persistentAction: null,
+    lastRequestedAction: currentAction,
+    lastRequestSource: 'init',
   };
 }
 function selectCreatureAnimationState(fighter, action, { reroll = true } = {}) {
@@ -2176,7 +2181,7 @@ function updateMatchUI() {
     const hpDelta = fighter.hp - previousHp;
     if (fill) fill.style.setProperty('--hp', `${fighter.hp}%`);
     if (label) label.textContent = `HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}`;
-    if (stateLabel) stateLabel.textContent = fighter.state || 'idle';
+    if (stateLabel) stateLabel.textContent = getFighterVisualAnimation(index, state.match);
     if (fighterNode) fighterNode.dataset.hp = String(fighter.hp);
     if (hpDelta) triggerHpChangeEffect(index, hpDelta);
   });
@@ -2466,12 +2471,38 @@ function resolveTerminalMatchVisualState(source = 'unknown') {
   let changed = false;
   state.match.fighters.forEach((fighter, index) => {
     const finalAnimation = getTerminalAnimationForFighter(index, state.match);
-    if (!finalAnimation || fighter.state === finalAnimation) return;
-    fighter.state = finalAnimation;
-    changed = true;
+    fighter.animationState ||= createAnimationState(finalAnimation);
+    if (!finalAnimation) return;
+    if (fighter.state !== finalAnimation) {
+      fighter.state = finalAnimation;
+      changed = true;
+    }
+    fighter.animationState.visualAction = finalAnimation;
+    fighter.animationState.persistentAction = finalAnimation;
+    fighter.animationState.lockUntil = Number.POSITIVE_INFINITY;
+    fighter.animationState.lastRequestedAction = finalAnimation;
+    fighter.animationState.lastRequestSource = source;
   });
   console.info('[match] final animation resolution', summary);
   return changed;
+}
+function getFighterVisualAnimation(index, match = state.match) {
+  const fighter = match?.fighters?.[index];
+  if (!fighter) return 'idle';
+  const terminalAnimation = getTerminalAnimationForFighter(index, match);
+  if (terminalAnimation) return terminalAnimation;
+  fighter.animationState ||= createAnimationState(fighter.state || 'idle');
+  if (fighter.animationState.persistentAction) return fighter.animationState.persistentAction;
+  const now = Date.now();
+  if (
+    fighter.animationState.visualAction
+    && fighter.animationState.visualAction !== 'idle'
+    && Number.isFinite(fighter.animationState.lockUntil)
+    && fighter.animationState.lockUntil > now
+  ) {
+    return fighter.animationState.visualAction;
+  }
+  return fighter.state || 'idle';
 }
 function setFighterState(index, animation, reason = 'direct') {
   if (!state.match || index == null || !animation) return;
@@ -2494,15 +2525,70 @@ function setFighterState(index, animation, reason = 'direct') {
   }
   fighter.state = lockedAnimation || normalizedAction;
 }
-function playFighterAnimation(index, animation, reason = 'play') {
+function playFighterAnimation(index, animation, reason = 'play', { duration = 0, persistent = false, force = false } = {}) {
   if (!state.match || index == null || !animation) return;
   const fighter = state.match.fighters[index];
   if (!fighter) return;
+  fighter.animationState ||= createAnimationState(fighter.state || 'idle');
   const lockedAnimation = getTerminalAnimationForFighter(index, state.match);
   const normalizedAction = lockedAnimation || normalizeAnimationAction(animation);
-  const isActionChange = fighter.animationState?.currentAction !== normalizedAction;
+  const now = Date.now();
+  const previousVisual = getFighterVisualAnimation(index, state.match);
+  const hasActiveOneShotLock = previousVisual !== 'idle'
+    && !fighter.animationState.persistentAction
+    && Number.isFinite(fighter.animationState.lockUntil)
+    && fighter.animationState.lockUntil > now;
   setFighterState(index, normalizedAction, reason);
-  const selection = selectCreatureAnimationState(fighter, normalizedAction, { reroll: isActionChange });
+  fighter.animationState.lastRequestedAction = normalizedAction;
+  fighter.animationState.lastRequestSource = reason;
+  console.info('[match] animation requested', {
+    reason,
+    fighterId: fighter.id,
+    slot: fighter.slot,
+    requested: normalizedAction,
+    previousVisual,
+    state: fighter.state,
+    duration,
+    persistent,
+    force,
+  });
+  if (lockedAnimation || persistent) {
+    fighter.animationState.visualAction = normalizedAction;
+    fighter.animationState.persistentAction = normalizedAction;
+    fighter.animationState.lockUntil = Number.POSITIVE_INFINITY;
+  } else if (normalizedAction === 'idle') {
+    fighter.animationState.persistentAction = null;
+    if (hasActiveOneShotLock && !force) {
+      console.info('[match] animation interrupted-blocked', {
+        reason,
+        fighterId: fighter.id,
+        slot: fighter.slot,
+        attempted: normalizedAction,
+        activeVisual: previousVisual,
+        lockUntil: fighter.animationState.lockUntil,
+      });
+    } else {
+      fighter.animationState.visualAction = 'idle';
+      fighter.animationState.lockUntil = now + Math.max(0, duration || 0);
+    }
+  } else {
+    fighter.animationState.persistentAction = null;
+    fighter.animationState.visualAction = normalizedAction;
+    fighter.animationState.lockUntil = now + Math.max(0, duration || 0);
+  }
+  const nextVisual = getFighterVisualAnimation(index, state.match);
+  const isActionChange = fighter.animationState?.currentAction !== nextVisual;
+  const selection = selectCreatureAnimationState(fighter, nextVisual, { reroll: isActionChange });
+  console.info('[match] animation applied', {
+    reason,
+    fighterId: fighter.id,
+    slot: fighter.slot,
+    requested: normalizedAction,
+    applied: nextVisual,
+    state: fighter.state,
+    lockUntil: fighter.animationState.lockUntil,
+    persistent: fighter.animationState.persistentAction,
+  });
   state.match.animators?.[index]?.play(selection.action, undefined, {
     variant: selection.variant,
     src: selection.asset,
@@ -2518,7 +2604,7 @@ function restoreMatchAnimators({ force = false } = {}) {
   if (!state.match?.animators?.length) return;
   state.match.animators.forEach((animator, index) => {
     const fighter = state.match.fighters[index];
-    const fighterState = fighter?.state || 'idle';
+    const fighterState = getFighterVisualAnimation(index, state.match);
     const selection = selectCreatureAnimationState(fighter, fighterState, { reroll: false });
     if (!force && animator.current?.stateName === fighterState && animator.current?.src === selection.asset) return;
     animator.play(selection.action, undefined, {
@@ -2547,11 +2633,21 @@ async function runMatchActionGroup(actions, totalDuration) {
     const startAt = Math.max(0, action.startAt || 0);
     schedule(() => {
       if (action.animation === 'idle-all') {
-        setAllFighterStates('idle');
-        state.match.fighters.forEach((_, index) => playFighterAnimation(index, 'idle'));
+        setAllFighterStates('idle', `${action.type || 'idle'}-state`);
+        state.match.fighters.forEach((_, index) => playFighterAnimation(index, 'idle', `${action.type || 'idle'}-visual`, {
+          duration: action.duration || totalDuration || 0,
+        }));
       } else {
-        playFighterAnimation(action.sourceIndex, action.animation);
-        if (action.targetAnimation) playFighterAnimation(action.targetIndex, action.targetAnimation);
+        playFighterAnimation(action.sourceIndex, action.animation, action.type || action.animation, {
+          duration: action.duration || totalDuration || 0,
+          persistent: action.animation === 'victory' || action.animation === 'defeat',
+        });
+        if (action.targetAnimation) {
+          playFighterAnimation(action.targetIndex, action.targetAnimation, `${action.type || action.targetAnimation}-target`, {
+            duration: action.targetDuration || action.duration || totalDuration || 0,
+            persistent: action.targetAnimation === 'victory' || action.targetAnimation === 'defeat',
+          });
+        }
         if (Number.isInteger(action.sourceIndex)) {
           const sourceClass = action.animation === 'attack'
             ? 'combat-pop'
@@ -2769,6 +2865,7 @@ async function finishMatch({ runId = state.activeMatchRunId, matchId = state.mat
       targetIndex: winner === a ? 1 : 0,
       animation: 'victory',
       targetAnimation: 'defeat',
+      targetDuration: MATCH_ACTION_TIMINGS.defeat,
       sound: 'reveal',
       soundGroup: 'result',
       duration: MATCH_ACTION_TIMINGS.victory,
