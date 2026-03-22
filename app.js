@@ -359,6 +359,50 @@ function createAnimationState(currentAction = 'idle') {
     lastRequestSource: 'init',
   };
 }
+function serializeAnimationLock(lockUntil) {
+  return Number.isFinite(lockUntil) ? Number(lockUntil) : 'infinity';
+}
+function deserializeAnimationLock(lockUntil, fallback = 0) {
+  if (lockUntil === 'infinity') return Number.POSITIVE_INFINITY;
+  const parsed = Number(lockUntil);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function hydrateFighterAnimationState(sharedFighter, previousFighter, fallbackAction = 'idle') {
+  const previousState = previousFighter?.animationState || null;
+  const baseAction = normalizeAnimationAction(fallbackAction);
+  const animationState = previousState
+    ? {
+      ...previousState,
+      lastVariantByAction: { ...(previousState.lastVariantByAction || {}) },
+    }
+    : createAnimationState(baseAction);
+  const resolvedVisualAction = normalizeAnimationAction(sharedFighter?.resolvedVisualAction || sharedFighter?.visualAction || animationState.visualAction || baseAction);
+  const persistentAction = sharedFighter?.persistentAction
+    ? normalizeAnimationAction(sharedFighter.persistentAction)
+    : (previousState?.persistentAction ? normalizeAnimationAction(previousState.persistentAction) : null);
+  const fallbackLock = previousState?.lockUntil ?? 0;
+  const lockUntil = deserializeAnimationLock(sharedFighter?.lockUntil, fallbackLock);
+  animationState.visualAction = persistentAction || resolvedVisualAction || baseAction;
+  animationState.persistentAction = persistentAction;
+  animationState.lockUntil = persistentAction ? Number.POSITIVE_INFINITY : lockUntil;
+  animationState.lastRequestedAction = normalizeAnimationAction(sharedFighter?.lastRequestedAction || animationState.lastRequestedAction || animationState.visualAction);
+  animationState.lastRequestSource = sharedFighter?.lastRequestSource || animationState.lastRequestSource || 'hydrate';
+  console.info('[match] animation restored', {
+    source: 'hydrateFighterAnimationState',
+    fighterId: sharedFighter?.id || previousFighter?.id || null,
+    slot: sharedFighter?.slot || previousFighter?.slot || null,
+    fallbackAction: baseAction,
+    resolvedVisualAction,
+    persistentAction: animationState.persistentAction,
+    lockUntil: animationState.lockUntil,
+    previousVisualAction: previousState?.visualAction || null,
+    previousPersistentAction: previousState?.persistentAction || null,
+  });
+  if (!animationState.currentAsset) {
+    animationState.currentAsset = getActionAsset(animationState.visualAction || baseAction, 1);
+  }
+  return animationState;
+}
 function selectCreatureAnimationState(fighter, action, { reroll = true } = {}) {
   if (!fighter) return { action: 'idle', variant: 1, timingMultiplier: 1, asset: getActionAsset('idle', 1) };
   const normalizedAction = normalizeAnimationAction(action);
@@ -1878,7 +1922,7 @@ function setPendingMatchState(nextPendingMatch) {
         if (hydration.transitionedToPostmatch) {
           render();
         } else {
-          restoreMatchAnimators();
+          restoreMatchAnimators({ source: 'watchSharedMatch:hydrate' });
           updateMatchUI();
         }
       }
@@ -2115,7 +2159,7 @@ function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
       hp: sharedFighter.hp,
       displayedHp: Number.isFinite(Number(previousFighter?.displayedHp)) ? Number(previousFighter.displayedHp) : sharedFighter.hp,
       state: stateName,
-      animationState: previousFighter?.animationState || createAnimationState(stateName),
+      animationState: hydrateFighterAnimationState(sharedFighter, previousFighter, stateName),
     };
   });
   const resolvedWinnerSlot = fighters.find((fighter) => fighter.id === winnerId)?.slot || winnerSlot || null;
@@ -2461,7 +2505,24 @@ async function syncSharedMatchState(extraState = {}) {
         turn: state.match.turn,
         lastAction: extraState.lastAction || state.match.lastAction || null,
         logs: [...state.logs],
-        fighters: state.match.fighters.map(({ slot, id, name, hp, variantIndex, state: fighterState }) => ({ slot, id, name, hp, variantIndex, state: fighterState })),
+        fighters: state.match.fighters.map((fighter, index) => {
+          const resolvedVisualAction = getFighterVisualAnimation(index, state.match);
+          const animationState = fighter.animationState || createAnimationState(resolvedVisualAction);
+          return {
+            slot: fighter.slot,
+            id: fighter.id,
+            name: fighter.name,
+            hp: fighter.hp,
+            variantIndex: fighter.variantIndex,
+            state: fighter.state,
+            resolvedVisualAction,
+            visualAction: animationState.visualAction || resolvedVisualAction,
+            persistentAction: animationState.persistentAction || null,
+            lockUntil: serializeAnimationLock(animationState.lockUntil),
+            lastRequestedAction: animationState.lastRequestedAction || resolvedVisualAction,
+            lastRequestSource: animationState.lastRequestSource || 'syncSharedMatchState',
+          };
+        }),
       },
     });
     debugMatchLog('shared snapshot persisted', {
@@ -2622,12 +2683,11 @@ function getFighterVisualAnimation(index, match = state.match) {
   if (
     fighter.animationState.visualAction
     && fighter.animationState.visualAction !== 'idle'
-    && Number.isFinite(fighter.animationState.lockUntil)
-    && fighter.animationState.lockUntil > now
+    && (fighter.animationState.lockUntil === Number.POSITIVE_INFINITY || (Number.isFinite(fighter.animationState.lockUntil) && fighter.animationState.lockUntil > now))
   ) {
     return fighter.animationState.visualAction;
   }
-  return fighter.state || 'idle';
+  return 'idle';
 }
 function setFighterState(index, animation, reason = 'direct') {
   if (!state.match || index == null || !animation) return;
@@ -2725,13 +2785,25 @@ function setAllFighterStates(animation, reason = 'bulk') {
   if (!state.match || !animation) return;
   state.match.fighters.forEach((_, index) => setFighterState(index, animation, reason));
 }
-function restoreMatchAnimators({ force = false } = {}) {
+function restoreMatchAnimators({ force = false, source = 'restoreMatchAnimators' } = {}) {
   if (!state.match?.animators?.length) return;
   state.match.animators.forEach((animator, index) => {
     const fighter = state.match.fighters[index];
     const fighterState = getFighterVisualAnimation(index, state.match);
     const selection = selectCreatureAnimationState(fighter, fighterState, { reroll: false });
-    if (!force && animator.current?.stateName === fighterState && animator.current?.src === selection.asset) return;
+    const skipped = !force && animator.current?.stateName === fighterState && animator.current?.src === selection.asset;
+    console.info('[match] animator restore', {
+      source,
+      fighterId: fighter?.id || null,
+      slot: fighter?.slot || null,
+      resolvedVisualAction: fighterState,
+      currentAnimatorState: animator.current?.stateName || null,
+      currentAnimatorSrc: animator.current?.src || null,
+      nextAnimatorSrc: selection.asset,
+      force,
+      skipped,
+    });
+    if (skipped) return;
     animator.play(selection.action, undefined, {
       variant: selection.variant,
       src: selection.asset,
@@ -3054,7 +3126,7 @@ async function finishMatch({ runId = state.activeMatchRunId, matchId = state.mat
   if (!isActiveMatchRun(runId, matchId) || !state.match) return;
   state.screen = 'postmatch';
   render();
-  restoreMatchAnimators({ force: true });
+  restoreMatchAnimators({ force: true, source: 'finishMatch:post-render' });
   syncSharedMatchResult();
 }
 
@@ -3462,7 +3534,7 @@ function renderMatchOrPost() {
                     <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}" data-fighter-header="${index}">
                       <div class="fighter-label-row">
                         <span class="fighter-side">${getMatchPlayerLabel(fighter.slot)}</span>
-                        <span class="fighter-state" data-fighter-state="${index}">${fighter.state || 'idle'}</span>
+                        <span class="fighter-state" data-fighter-state="${index}">${getFighterVisualAnimation(index, state.match)}</span>
                       </div>
                       <div class="nameplate">${escapeHtml(fighter.name)}</div>
                       <div class="subtext" data-hp-label="${index}">HP ${fighter.hp} · arena ready</div>
@@ -3717,16 +3789,23 @@ function render() {
     preloadBattleAnimationAssets();
     state.match.animators = nodes.map((node, index) => {
       const existing = canReuse ? previous[index] : null;
+      const recreated = Boolean(existing);
       if (existing) {
         existing.destroy?.();
       }
+      console.info('[match] animator instance prepared', {
+        source: 'render',
+        fighterId: state.match.fighters[index]?.id || null,
+        slot: state.match.fighters[index]?.slot || null,
+        recreated,
+      });
       return new SpriteSheetAnimator(node, {
       flip: state.match.fighters[index].side === 'left' ? -1 : 1,
       variant: state.match.fighters[index].variant,
     });
     });
     previous.forEach((animator, index) => { if (!canReuse || !state.match.animators[index]) animator.destroy?.(); });
-    restoreMatchAnimators({ force: true });
+    restoreMatchAnimators({ force: true, source: 'render:match-animators' });
   }
 
   attachButtonJuice(app);
