@@ -1641,6 +1641,110 @@ function debugMatchLog(event, payload) {
   if (!MATCH_DEBUG_LOGS_ENABLED) return;
   console.info(`[match] ${event}`, payload);
 }
+function createMatchPresentationState(previousPresentation = null) {
+  const presentedEventIds = previousPresentation?.presentedEventIds instanceof Set
+    ? new Set(previousPresentation.presentedEventIds)
+    : new Set();
+  return {
+    token: Number.isFinite(Number(previousPresentation?.token)) ? Number(previousPresentation.token) : 0,
+    lastHydratedProgressKey: previousPresentation?.lastHydratedProgressKey || null,
+    presentedEventIds,
+  };
+}
+function ensureMatchPresentation(match = state.match) {
+  if (!match) return null;
+  match.presentation ||= createMatchPresentationState();
+  if (!(match.presentation.presentedEventIds instanceof Set)) {
+    match.presentation.presentedEventIds = new Set(match.presentation.presentedEventIds || []);
+  }
+  return match.presentation;
+}
+function getMatchCombatProgress(match = state.match) {
+  if (!match?.fighters?.length) {
+    return {
+      turn: 0,
+      totalDamage: 0,
+      totalHp: 0,
+      logCount: 0,
+      finished: false,
+      progressKey: '0|0|0|0|active|none|none',
+    };
+  }
+  const totalHp = match.fighters.reduce((sum, fighter) => sum + Math.max(0, Number(fighter?.hp) || 0), 0);
+  const totalDamage = (match.fighters.length * 100) - totalHp;
+  const logCount = Array.isArray(match.logs) ? match.logs.length : Array.isArray(state.logs) ? state.logs.length : 0;
+  const finished = Boolean(match.finished);
+  const progressKey = [
+    Number(match.turn) || 0,
+    totalDamage,
+    totalHp,
+    logCount,
+    finished ? 'finished' : 'active',
+    match.winnerId || 'none',
+    match.loserId || 'none',
+  ].join('|');
+  return {
+    turn: Number(match.turn) || 0,
+    totalDamage,
+    totalHp,
+    logCount,
+    finished,
+    progressKey,
+  };
+}
+function compareMatchProgress(leftMatch, rightMatch) {
+  const left = getMatchCombatProgress(leftMatch);
+  const right = getMatchCombatProgress(rightMatch);
+  const comparisons = [
+    ['finished', Number(left.finished), Number(right.finished)],
+    ['turn', left.turn, right.turn],
+    ['totalDamage', left.totalDamage, right.totalDamage],
+    ['logCount', left.logCount, right.logCount],
+  ];
+  for (const [field, leftValue, rightValue] of comparisons) {
+    if (leftValue === rightValue) continue;
+    return { direction: leftValue > rightValue ? 1 : -1, field, left, right };
+  }
+  return { direction: 0, field: 'equal', left, right };
+}
+function invalidateMatchPresentation(match = state.match, reason = 'unknown') {
+  const presentation = ensureMatchPresentation(match);
+  if (!presentation) return 0;
+  presentation.token += 1;
+  debugMatchLog('presentation invalidated', {
+    reason,
+    token: presentation.token,
+    progress: getMatchCombatProgress(match).progressKey,
+  });
+  return presentation.token;
+}
+function consumePresentationEvent(eventId, details = {}, match = state.match) {
+  if (!eventId) return true;
+  const presentation = ensureMatchPresentation(match);
+  if (!presentation) return false;
+  const duplicate = presentation.presentedEventIds.has(eventId);
+  debugMatchLog('presentation event', {
+    eventId,
+    duplicate,
+    ...details,
+    progress: getMatchCombatProgress(match).progressKey,
+  });
+  if (duplicate) return false;
+  presentation.presentedEventIds.add(eventId);
+  return true;
+}
+function applyCanonicalHpChange(fighter, nextHp, details = {}) {
+  if (!fighter) return false;
+  const previousHp = Number(fighter.hp) || 0;
+  const canonicalHp = Math.max(0, Number(nextHp) || 0);
+  if (previousHp === canonicalHp) {
+    debugMatchLog('hp apply skipped', { fighterId: fighter.id, slot: fighter.slot, previousHp, nextHp: canonicalHp, ...details });
+    return false;
+  }
+  fighter.hp = canonicalHp;
+  debugMatchLog('hp canonical write', { fighterId: fighter.id, slot: fighter.slot, previousHp, nextHp: canonicalHp, ...details });
+  return true;
+}
 function getMatchRenderSide(slot) {
   return MATCH_SIDE_BY_SLOT[slot] || 'left';
 }
@@ -2009,6 +2113,7 @@ function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
       slot,
       side: getMatchRenderSide(slot),
       hp: sharedFighter.hp,
+      displayedHp: Number.isFinite(Number(previousFighter?.displayedHp)) ? Number(previousFighter.displayedHp) : sharedFighter.hp,
       state: stateName,
       animationState: previousFighter?.animationState || createAnimationState(stateName),
     };
@@ -2030,6 +2135,7 @@ function buildCanonicalMatchSnapshot(payload, { previousMatch = null } = {}) {
     logs,
     lastAction,
     sharedState,
+    presentation: createMatchPresentationState(previousMatch?.presentation),
   };
 }
 function createResolvedMatch(payload) {
@@ -2177,13 +2283,29 @@ function updateMatchUI() {
     const label = document.querySelector(`[data-hp-label="${index}"]`);
     const fighterNode = document.querySelector(`[data-fighter="${index}"]`);
     const stateLabel = document.querySelector(`[data-fighter-state="${index}"]`);
-    const previousHp = Number(fighterNode?.dataset.hp ?? fighter.hp);
-    const hpDelta = fighter.hp - previousHp;
-    if (fill) fill.style.setProperty('--hp', `${fighter.hp}%`);
+    const previousDisplayedHp = Number.isFinite(Number(fighter.displayedHp))
+      ? Number(fighter.displayedHp)
+      : Number(fighterNode?.dataset.displayedHp ?? fighter.hp);
+    const nextDisplayedHp = Math.max(0, Math.min(100, Number(fighter.hp) || 0));
+    const hpDelta = nextDisplayedHp - previousDisplayedHp;
+    fighter.displayedHp = nextDisplayedHp;
+    if (fill) fill.style.setProperty('--hp', `${nextDisplayedHp}%`);
     if (label) label.textContent = `HP ${fighter.hp} · ${fighter.slot === 'A' ? 'Player A' : 'Player B'}`;
     if (stateLabel) stateLabel.textContent = getFighterVisualAnimation(index, state.match);
-    if (fighterNode) fighterNode.dataset.hp = String(fighter.hp);
-    if (hpDelta) triggerHpChangeEffect(index, hpDelta);
+    if (fighterNode) {
+      fighterNode.dataset.canonicalHp = String(fighter.hp);
+      fighterNode.dataset.displayedHp = String(nextDisplayedHp);
+    }
+    if (hpDelta) {
+      debugMatchLog('hp visual sync', {
+        fighterId: fighter.id,
+        slot: fighter.slot,
+        previousDisplayedHp,
+        nextDisplayedHp,
+        canonicalHp: fighter.hp,
+      });
+      triggerHpChangeEffect(index, hpDelta);
+    }
   });
   const turnLabel = document.querySelector('[data-turn-counter]');
   if (turnLabel) turnLabel.textContent = `Turn ${state.match.turn}`;
@@ -2206,7 +2328,10 @@ function updateMatchUI() {
 }
 function logLine(text) {
   state.logs = [text, ...state.logs].slice(0, MAX_BATTLE_LOG_ENTRIES);
-  if (state.match) state.match.sharedState = { ...(state.match.sharedState || {}), logs: [...state.logs] };
+  if (state.match) {
+    state.match.logs = [...state.logs];
+    state.match.sharedState = { ...(state.match.sharedState || {}), logs: [...state.logs] };
+  }
   updateMatchUI();
 }
 function createSeededCombatRng(seed) {
@@ -2622,16 +2747,31 @@ async function runMatchAction(action) {
 async function runMatchActionGroup(actions, totalDuration) {
   if (!state.match || !actions?.length) return;
   const timers = [];
+  const runId = state.activeMatchRunId;
+  const matchId = state.match.id;
+  const presentationToken = ensureMatchPresentation(state.match)?.token || 0;
+  const canPresent = () => isActiveMatchRun(runId, matchId)
+    && state.match?.id === matchId
+    && (ensureMatchPresentation(state.match)?.token || 0) === presentationToken;
   const schedule = (fn, delay = 0) => {
-    if (delay <= 0) {
+    const guarded = () => {
+      if (!canPresent()) return;
       fn();
+    };
+    if (delay <= 0) {
+      guarded();
       return;
     }
-    timers.push(window.setTimeout(fn, delay));
+    timers.push(window.setTimeout(guarded, delay));
   };
   actions.forEach((action) => {
     const startAt = Math.max(0, action.startAt || 0);
     schedule(() => {
+      if (!consumePresentationEvent(`${action.eventId || `${action.type || 'action'}:${startAt}`}:visual`, {
+        source: 'runMatchActionGroup',
+        phase: 'visual',
+        type: action.type || action.animation,
+      })) return;
       if (action.animation === 'idle-all') {
         setAllFighterStates('idle', `${action.type || 'idle'}-state`);
         state.match.fighters.forEach((_, index) => playFighterAnimation(index, 'idle', `${action.type || 'idle'}-visual`, {
@@ -2680,19 +2820,36 @@ async function runMatchActionGroup(actions, totalDuration) {
     }, startAt);
     if (action.sound) {
       schedule(() => {
+        if (!consumePresentationEvent(`${action.eventId || `${action.type || 'action'}:${startAt}`}:sound`, {
+          source: 'runMatchActionGroup',
+          phase: 'sound',
+          type: action.type || action.animation,
+        })) return;
         if (action.soundGroup === 'result') playResultSfx(action.sound);
         else playBattleSfx(action.sound);
       }, startAt + (action.soundDelay ?? 0));
     }
     if (action.apply) {
       schedule(() => {
+        if (!consumePresentationEvent(`${action.eventId || `${action.type || 'action'}:${startAt}`}:apply`, {
+          source: 'runMatchActionGroup',
+          phase: 'apply',
+          type: action.type || action.animation,
+        })) return;
         action.apply();
         if (Number.isInteger(action.targetIndex)) triggerFighterEffect(action.targetIndex, 'has-state-pop', 280);
         updateMatchUI();
       }, startAt + (action.applyDelay ?? 0));
     }
     if (action.log) {
-      schedule(() => logLine(action.log), startAt + (action.logDelay ?? 0));
+      schedule(() => {
+        if (!consumePresentationEvent(`${action.eventId || `${action.type || 'action'}:${startAt}`}:log`, {
+          source: 'runMatchActionGroup',
+          phase: 'log',
+          type: action.type || action.animation,
+        })) return;
+        logLine(action.log);
+      }, startAt + (action.logDelay ?? 0));
     }
   });
   await wait(totalDuration || 0);
@@ -2701,9 +2858,11 @@ async function runMatchActionGroup(actions, totalDuration) {
 function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
   const attacker = state.match.fighters[attackerIndex];
   const defender = state.match.fighters[defenderIndex];
+  const turn = Number(state.match?.turn) || 0;
   const groups = [{
     duration: MATCH_ACTION_TIMINGS.recharge,
     actions: [{
+      eventId: `turn:${turn}:recharge:${attacker.slot}`,
       type: 'recharge',
       sourceIndex: attackerIndex,
       targetIndex: defenderIndex,
@@ -2722,17 +2881,19 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
     groups.push({
       duration: Math.max(MATCH_ACTION_TIMINGS.backfire, MATCH_ACTION_OVERLAP.backfireImpactLeadIn + reactionDuration),
       actions: [{
+        eventId: `turn:${turn}:backfire:${attacker.slot}`,
         type: 'backfire',
         sourceIndex: attackerIndex,
         targetIndex: attackerIndex,
         animation: 'backfire',
         sound: 'backfire',
         soundDelay: MATCH_SOUND_OFFSETS.backfire,
-        apply: () => { attacker.hp = nextHp; },
+        apply: () => applyCanonicalHpChange(attacker, nextHp, { source: 'local-sequence', eventId: `turn:${turn}:backfire:${attacker.slot}` }),
         applyDelay: MATCH_ACTION_OVERLAP.backfireImpactLeadIn,
         log: action.text,
         logDelay: MATCH_ACTION_OVERLAP.backfireImpactLeadIn,
       }, {
+        eventId: `turn:${turn}:${reactionType}:${attacker.slot}`,
         type: reactionType,
         sourceIndex: attackerIndex,
         targetIndex: attackerIndex,
@@ -2750,6 +2911,7 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
   groups.push({
     duration: Math.max(MATCH_ACTION_TIMINGS.attack, MATCH_ACTION_OVERLAP.attackImpactLeadIn + reactionDuration),
     actions: [{
+      eventId: `turn:${turn}:attack:${attacker.slot}`,
       type: 'attack',
       sourceIndex: attackerIndex,
       targetIndex: defenderIndex,
@@ -2758,6 +2920,7 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
       soundDelay: MATCH_SOUND_OFFSETS.attack,
       duration: MATCH_ACTION_TIMINGS.attack,
     }, {
+      eventId: `turn:${turn}:${reactionType}:${defender.slot}`,
       type: reactionType,
       sourceIndex: defenderIndex,
       targetIndex: defenderIndex,
@@ -2765,7 +2928,7 @@ function buildTurnActionGroups(attackerIndex, defenderIndex, action) {
       sound: reactionType,
       startAt: MATCH_ACTION_OVERLAP.attackImpactLeadIn,
       duration: reactionDuration,
-      apply: () => { defender.hp = nextHp; },
+      apply: () => applyCanonicalHpChange(defender, nextHp, { source: 'local-sequence', eventId: `turn:${turn}:${reactionType}:${defender.slot}` }),
       log: action.text,
     }],
   });
@@ -2787,7 +2950,8 @@ async function runMatchSequence() {
   };
   const getFighters = () => (guardActive() ? state.match.fighters : []);
   audioManager.syncHomePlayback();
-  if (!(await guardStep(() => runMatchAction({ type: 'intro', animation: 'idle-all', sound: 'intro', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.intro })))) return;
+  invalidateMatchPresentation(state.match, 'run-sequence-start');
+  if (!(await guardStep(() => runMatchAction({ eventId: 'match:intro', type: 'intro', animation: 'idle-all', sound: 'intro', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.intro })))) return;
   while (guardActive() && !state.match.finished) {
     state.match.turn += 1;
     state.match.lastAction = null;
@@ -2810,7 +2974,7 @@ async function runMatchSequence() {
       if (guardActive()) await finishMatch({ runId, matchId });
       return;
     }
-    if (!(await guardStep(() => runMatchAction({ type: 'idle', animation: 'idle-all', duration: MATCH_ACTION_TIMINGS.idle })))) return;
+    if (!(await guardStep(() => runMatchAction({ eventId: `turn:${state.match.turn}:idle-all`, type: 'idle', animation: 'idle-all', duration: MATCH_ACTION_TIMINGS.idle })))) return;
   }
   if (!guardActive() || !state.match?.finished) return;
   resolveTerminalMatchVisualState('sequence-exit');
@@ -2840,7 +3004,7 @@ async function finishMatch({ runId = state.activeMatchRunId, matchId = state.mat
     setAllFighterStates('idle', 'finish-draw');
     resolveTerminalMatchVisualState('finish-draw');
     await updateLeaderboardForResult(null, null, true);
-    await runMatchAction({ type: 'draw', animation: 'idle-all', sound: 'reveal', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.draw, log: 'Toxic draw: nobody actually collapses.' });
+    await runMatchAction({ eventId: 'match:draw', type: 'draw', animation: 'idle-all', sound: 'reveal', soundGroup: 'result', duration: MATCH_ACTION_TIMINGS.draw, log: 'Toxic draw: nobody actually collapses.' });
   } else {
     const winner = a.hp > b.hp ? a : b;
     const loser = winner === a ? b : a;
@@ -2860,6 +3024,7 @@ async function finishMatch({ runId = state.activeMatchRunId, matchId = state.mat
     loser.state = 'defeat';
     resolveTerminalMatchVisualState('finish-local');
     await runMatchAction({
+      eventId: 'match:finish',
       type: 'finish',
       sourceIndex: winner === a ? 0 : 1,
       targetIndex: winner === a ? 1 : 0,
@@ -3173,15 +3338,21 @@ function getSharedMatchProgress(sharedMatch) {
 function isSharedSnapshotNewer(incomingSnapshot, currentSnapshot = state.match) {
   if (!incomingSnapshot?.id) return false;
   if (!currentSnapshot?.id) return true;
+  const progressComparison = compareMatchProgress(incomingSnapshot, currentSnapshot);
+  if (progressComparison.direction !== 0) return progressComparison.direction > 0;
   const incomingRevision = Number(incomingSnapshot.revision);
   const currentRevision = Number(currentSnapshot.revision);
-  if (Number.isFinite(incomingRevision) && Number.isFinite(currentRevision)) return incomingRevision > currentRevision;
+  if (Number.isFinite(incomingRevision) && Number.isFinite(currentRevision) && incomingRevision !== currentRevision) {
+    return incomingRevision > currentRevision;
+  }
   const incomingUpdatedAt = Date.parse(incomingSnapshot.updatedAt || '');
   const currentUpdatedAt = Date.parse(currentSnapshot.updatedAt || '');
-  if (Number.isFinite(incomingUpdatedAt) && Number.isFinite(currentUpdatedAt)) return incomingUpdatedAt > currentUpdatedAt;
+  if (Number.isFinite(incomingUpdatedAt) && Number.isFinite(currentUpdatedAt) && incomingUpdatedAt !== currentUpdatedAt) {
+    return incomingUpdatedAt > currentUpdatedAt;
+  }
   return false;
 }
-// Shared snapshots may replace local combat state only when strictly newer by revision/updatedAt.
+// Shared snapshots may replace local combat state only when their combat progress is ahead; revision/updatedAt only break exact ties.
 function getSharedHydrationDecision(sharedMatch, currentSnapshot = state.match) {
   if (!sharedMatch?.id || !sharedMatch?.sharedState) {
     return { accept: false, reason: 'missing-shared-state', snapshot: null };
@@ -3189,6 +3360,7 @@ function getSharedHydrationDecision(sharedMatch, currentSnapshot = state.match) 
   const incomingSnapshot = buildCanonicalMatchSnapshot(sharedMatch, { previousMatch: currentSnapshot });
   const accept = isSharedSnapshotNewer(incomingSnapshot, currentSnapshot);
   const reason = !currentSnapshot ? 'no-local-snapshot' : accept ? 'newer-shared-snapshot' : 'stale-or-duplicate-shared-snapshot';
+  const progressComparison = compareMatchProgress(incomingSnapshot, currentSnapshot);
   debugMatchLog('hydration decision', {
     matchId: sharedMatch.id,
     reason,
@@ -3199,17 +3371,29 @@ function getSharedHydrationDecision(sharedMatch, currentSnapshot = state.match) 
     finished: incomingSnapshot.finished,
     winnerId: incomingSnapshot.winnerId,
     loserId: incomingSnapshot.loserId,
+    progressField: progressComparison.field,
+    progressDirection: progressComparison.direction,
+    currentProgress: progressComparison.right.progressKey,
+    incomingProgress: progressComparison.left.progressKey,
   });
   return { accept, reason, snapshot: incomingSnapshot };
 }
 function hydrateMatchFromSharedState(sharedMatch) {
-  const decision = getSharedHydrationDecision(sharedMatch, state.match);
+  const previousMatch = state.match;
+  const decision = getSharedHydrationDecision(sharedMatch, previousMatch);
   if (!decision.accept || !decision.snapshot) return { transitionedToPostmatch: false, resolvedTerminalState: false, accepted: false };
   state.match = decision.snapshot;
+  ensureMatchPresentation(state.match).lastHydratedProgressKey = getMatchCombatProgress(decision.snapshot).progressKey;
+  invalidateMatchPresentation(state.match, 'hydrate-shared');
   state.logs = [...decision.snapshot.logs];
   const resolvedTerminalState = resolveTerminalMatchVisualState('hydrate-shared');
   const transitionedToPostmatch = Boolean(decision.snapshot.finished && state.screen === 'match');
   if (transitionedToPostmatch) state.screen = 'postmatch';
+  debugMatchLog('hydration applied', {
+    matchId: sharedMatch.id,
+    previousProgress: getMatchCombatProgress(previousMatch).progressKey,
+    nextProgress: getMatchCombatProgress(decision.snapshot).progressKey,
+  });
   return { transitionedToPostmatch, resolvedTerminalState, accepted: true };
 }
 
@@ -3274,7 +3458,7 @@ function renderMatchOrPost() {
                 <div class="arena-background" aria-hidden="true" style="--arena-image:url('${ARENA_BACKGROUND}')"></div>
                 <div class="arena-floor" aria-hidden="true"></div>
                 ${state.match.fighters.map((fighter, index) => `
-                  <article class="fighter fighter-${fighter.side}" data-fighter="${index}" data-hp="${fighter.hp}">
+                  <article class="fighter fighter-${fighter.side}" data-fighter="${index}" data-canonical-hp="${fighter.hp}" data-displayed-hp="${Number.isFinite(Number(fighter.displayedHp)) ? fighter.displayedHp : fighter.hp}">
                     <div class="fighter-header ${fighter.side === 'left' ? 'align-left' : 'align-right'}" data-fighter-header="${index}">
                       <div class="fighter-label-row">
                         <span class="fighter-side">${getMatchPlayerLabel(fighter.slot)}</span>
@@ -3291,7 +3475,7 @@ function renderMatchOrPost() {
                         </div>
                       </div>
                     </div>
-                    <div class="health-bar" data-hp-wrap="${index}"><div class="health-fill" data-hp="${index}" style="--hp:${fighter.hp}%"></div></div>
+                    <div class="health-bar" data-hp-wrap="${index}"><div class="health-fill" data-hp="${index}" style="--hp:${Number.isFinite(Number(fighter.displayedHp)) ? fighter.displayedHp : fighter.hp}%"></div></div>
                   </article>`).join('')}
               </section>
             </div>
