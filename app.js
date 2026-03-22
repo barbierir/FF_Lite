@@ -2311,7 +2311,7 @@ function formatBattleFeedEntry(line, index) {
     : { eventType, headline: highlightLogText(rawLine), detail: '' };
   const resolvedType = content.eventType || eventType;
   const meta = getLogEventMeta(resolvedType);
-  return `<article class="battle-feed__item ${meta.className} ${index === 0 ? 'is-latest' : ''}" data-log-row="${index % 2}" data-log-type="${resolvedType}"><span class="battle-feed__icon" aria-hidden="true">${meta.icon}</span><div class="battle-feed__body"><div class="battle-feed__meta"><span class="battle-feed__tone">${meta.tone}</span><span class="battle-feed__count">#${String(index + 1).padStart(2, '0')}</span></div><p class="battle-feed__headline"><span class="sr-only">${meta.label}: </span>${content.headline}</p>${content.detail ? `<p class="battle-feed__detail">${content.detail}</p>` : ''}</div></article>`;
+  return `<article class="battle-feed__item ${meta.className} ${index === state.logs.length - 1 ? 'is-latest' : ''}" data-log-row="${index % 2}" data-log-type="${resolvedType}"><span class="battle-feed__icon" aria-hidden="true">${meta.icon}</span><div class="battle-feed__body"><div class="battle-feed__meta"><span class="battle-feed__tone">${meta.tone}</span><span class="battle-feed__count">#${String(index + 1).padStart(2, '0')}</span></div><p class="battle-feed__headline"><span class="sr-only">${meta.label}: </span>${content.headline}</p>${content.detail ? `<p class="battle-feed__detail">${content.detail}</p>` : ''}</div></article>`;
 }
 function renderBattleLogEntries() {
   if (!state.logs.length) {
@@ -2357,21 +2357,22 @@ function updateMatchUI() {
   if (logPanel) {
     const nextMarkup = renderBattleLogEntries();
     if (logPanel.dataset.lastMarkup !== nextMarkup) {
-      const shouldPinToLatest = logPanel.scrollTop < 28;
+      const distanceFromLatest = logPanel.scrollHeight - logPanel.clientHeight - logPanel.scrollTop;
+      const shouldPinToLatest = distanceFromLatest < 28;
       logPanel.innerHTML = nextMarkup;
       logPanel.dataset.lastMarkup = nextMarkup;
       if (state.logs.length && shouldPinToLatest) {
-        logPanel.scrollTo({ top: 0, behavior: state.reducedMotion ? 'auto' : 'smooth' });
+        logPanel.scrollTo({ top: logPanel.scrollHeight, behavior: state.reducedMotion ? 'auto' : 'smooth' });
       }
-      const firstNewEntry = logPanel.querySelector('.battle-feed__item');
-      if (firstNewEntry) triggerTemporaryClass(firstNewEntry, 'log-entry-in', 220);
+      const latestEntry = logPanel.querySelector('.battle-feed__item.is-latest') || logPanel.querySelector('.battle-feed__item:last-child');
+      if (latestEntry) triggerTemporaryClass(latestEntry, 'log-entry-in', 220);
     }
   }
   if (state.screen === 'postmatch') triggerResultEffects();
   refreshAudioControlsUI();
 }
 function logLine(text) {
-  state.logs = [text, ...state.logs].slice(0, MAX_BATTLE_LOG_ENTRIES);
+  state.logs = [...state.logs, text].slice(-MAX_BATTLE_LOG_ENTRIES);
   if (state.match) {
     state.match.logs = [...state.logs];
     state.match.sharedState = { ...(state.match.sharedState || {}), logs: [...state.logs] };
@@ -2587,7 +2588,7 @@ function triggerResultEffects() {
     resultBanner.dataset.revealed = 'true';
     triggerTemporaryClass(resultBanner, 'result-reveal', COMBAT_EFFECT_DURATIONS.result);
   }
-  const finalLog = document.querySelector('#log-lines .battle-feed__item:first-child');
+  const finalLog = document.querySelector('#log-lines .battle-feed__item.is-latest, #log-lines .battle-feed__item:last-child');
   if (finalLog && finalLog.dataset.finale !== 'true') {
     finalLog.dataset.finale = 'true';
     triggerTemporaryClass(finalLog, 'log-finale', COMBAT_EFFECT_DURATIONS.result);
@@ -3523,6 +3524,11 @@ function renderMatchOrPost() {
     : 'Draw!';
   return `
     <section class="panel match-layout world-card screen-panel">
+      <div class="match-rotate-overlay" aria-live="polite">
+        <div class="match-rotate-overlay__icon" aria-hidden="true">↻</div>
+        <p class="match-rotate-overlay__title">Ruota il telefono in orizzontale per vedere il match</p>
+        <p class="match-rotate-overlay__detail">La battaglia torna visibile appena passi alla modalità landscape.</p>
+      </div>
       <div class="match-shell">
         <div class="match-head">
           <div class="match-meta">
